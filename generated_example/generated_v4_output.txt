@@ -1,0 +1,99 @@
+Running Test 1: Adding points...
+Added Point: (0, 0, 0)
+Added Point: (1, 1, 1)
+[PASS] Adding points
+Points:
+  Point 0: (0, 0, 0)
+  Point 1: (1, 1, 1)
+Running Test 2: Adding springs...
+Added Point: (0, 0, 0)
+Added Point: (1, 1, 1)
+Added Spring: connects Point 0 and Point 1, rest_length=1.732, stiffness=0.5
+[PASS] Adding springs
+Springs:
+  Spring 0: connects Point 0 and Point 1, rest_length=1.732, stiffness=0.5
+Running Test 3: Compute forces with two points...
+Added Point: (0, 0, 0)
+Added Point: (1, 0, 0)
+Computing repulsion forces...
+Repulsion Force between Point 0 and Point 1: (-0.999999, 0, 0)
+Computing spring forces...
+[PASS] Compute forces size
+Forces:
+  Force on Point 0: (-0.999999, 0, 0)
+  Force on Point 1: (0.999999, 0, 0)
+Running Test 4: Compute repulsion forces...
+Added Point: (0, 0, 0)
+Added Point: (1, 0, 0)
+Computing repulsion forces...
+Repulsion Force between Point 0 and Point 1: (-0.999999, 0, 0)
+Computing spring forces...
+[PASS] Repulsion force on point 0
+Force on Point 0: (-0.999999, 0, 0)
+Running Test 5: Compute spring forces...
+Added Point: (0, 0, 0)
+Added Point: (1, 0, 0)
+Added Spring: connects Point 0 and Point 1, rest_length=1, stiffness=1
+Set repulsion to disabled
+Computing spring forces...
+Spring Force for Spring between Point 0 and Point 1: (-9.53673e-07, 0, 0)
+[PASS] Spring force with no displacement
+Force on Point 0: (9.53673e-07, 0, 0)
+Force on Point 1: (-9.53673e-07, 0, 0)
+Running Test 6: Simulation step...
+Added Point: (0, 0, 0)
+Added Point: (1, 0, 0)
+Added Spring: connects Point 0 and Point 1, rest_length=1, stiffness=1
+Performing simulation step with delta_time = 0.1...
+Computing repulsion forces...
+Repulsion Force between Point 0 and Point 1: (-0.999999, 0, 0)
+Computing spring forces...
+Spring Force for Spring between Point 0 and Point 1: (-9.53673e-07, 0, 0)
+Point 0 updated Position: (-0.00999998, 0, 0) Velocity: (-0.0999998, 0, 0)
+Point 1 updated Position: (1.01, 0, 0) Velocity: (0.0999998, 0, 0)
+[PASS] Position update after step
+After step:
+  Point 0 Position: (-0.00999998, 0, 0)
+  Point 0 Velocity: (-0.0999998, 0, 0)
+  Point 1 Position: (1.01, 0, 0)
+  Point 1 Velocity: (0.0999998, 0, 0)
+Running Test 7: Edge case with zero points...
+Computing repulsion forces...
+Computing spring forces...
+[PASS] Compute forces with zero points
+Forces size: 0
+Running Test 8: Edge case with one point...
+Added Point: (0, 0, 0)
+Computing repulsion forces...
+Computing spring forces...
+[PASS] Compute forces with one point
+Force on Point 0: (0, 0, 0)
+Running Test 9: Overlapping points...
+Added Point: (1, 1, 1)
+Added Point: (1, 1, 1)
+Computing repulsion forces...
+Repulsion Force between Point 0 and Point 1: (0, 0, 0)
+Computing spring forces...
+[PASS] Repulsion force on overlapping points
+Force on Point 0: (0, 0, 0)
+Force on Point 1: (0, 0, 0)
+Running Test 10: Multiple springs and points...
+Added Point: (0, 0, 0)
+Added Point: (1, 0, 0)
+Added Point: (0, 1, 0)
+Added Spring: connects Point 0 and Point 1, rest_length=1, stiffness=1
+Added Spring: connects Point 0 and Point 2, rest_length=1, stiffness=1
+Computing repulsion forces...
+Repulsion Force between Point 0 and Point 1: (-0.999999, 0, 0)
+Repulsion Force between Point 0 and Point 2: (0, -0.999999, 0)
+Repulsion Force between Point 1 and Point 2: (0.353553, -0.353553, 0)
+Computing spring forces...
+Spring Force for Spring between Point 0 and Point 1: (-9.53673e-07, 0, 0)
+Spring Force for Spring between Point 0 and Point 2: (0, -9.53673e-07, 0)
+[PASS] Multiple springs and points size
+Forces:
+  Force on Point 0: (-0.999998, -0.999998, 0)
+  Force on Point 1: (1.35355, -0.353553, 0)
+  Force on Point 2: (-0.353553, 1.35355, 0)
+All tests passed successfully.
+

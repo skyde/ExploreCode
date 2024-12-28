@@ -1,0 +1,21 @@
+Running Test 1: Adding points...
+[PASS] Adding points
+Points:
+  Point 0: (0, 0, 0)
+  Point 1: (1, 1, 1)
+Running Test 2: Adding springs...
+[PASS] Adding springs
+Springs:
+  Spring 0: connects Point 0 and Point 1, rest_length=1.732, stiffness=0.5
+Running Test 3: Compute forces with two points...
+[PASS] Compute forces size
+Forces:
+  Force on Point 0: (-0.999999, 0, 0)
+  Force on Point 1: (0.999999, 0, 0)
+Running Test 4: Compute repulsion forces...
+[PASS] Repulsion force on point 0
+Force on Point 0: (-0.999999, 0, 0)
+Running Test 5: Compute spring forces...
+[FAIL] Spring force with no displacement
+
+Assertion failed: condition, file generated\generated_v2.cpp, line 227
