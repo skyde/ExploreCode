@@ -18,9 +18,13 @@ DEBUG_MODE = False  # Toggle this to True for local debugging without API calls
 MODEL_NAME = "o1-mini"
 MAX_ITERATIONS = 4
 
-CPP_FILE = "generated.cpp"
-EXECUTABLE = "program"
+# We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
+# as well as corresponding output logs: generated_v1_output.txt, etc.
+# and a combined file everything.txt in the generated/ subfolder
+GENERATED_FOLDER = "generated"
+EVERYTHING_FILE = os.path.join(GENERATED_FOLDER, "everything.cpp")
 
+EXECUTABLE = "program"  # We'll compile the code to a program each iteration
 PRINT_SEND = True
 
 GENERATE_PROMPT = r"""
@@ -46,7 +50,7 @@ Do NOT put code in ```cpp blocks.
 """
 
 # We will crash if prompts exceed this length
-MAX_PROMPT_LENGTH = 15000
+MAX_PROMPT_LENGTH = 25000
 
 # ------------------ Debug Mode Hard-Coded Responses ------------------ #
 
@@ -162,7 +166,7 @@ def ensure_prompt_length_ok(prompt, max_length=MAX_PROMPT_LENGTH):
     """
     if len(prompt) > max_length:
         raise ValueError(f"Prompt length {len(prompt)} exceeded maximum of {max_length} characters. Exiting...")
-    
+
 # ------------------ OpenAI Helpers ------------------ #
 
 def call_openai(prompt, model=MODEL_NAME, temperature=0.2):
@@ -185,7 +189,6 @@ def call_openai(prompt, model=MODEL_NAME, temperature=0.2):
             print(prompt)
             print("----------------------------------------\n")
 
-
         response = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model=model
@@ -204,9 +207,23 @@ def call_openai(prompt, model=MODEL_NAME, temperature=0.2):
 # ------------------ File Helpers ------------------ #
 
 def write_to_file(filename, content):
+    """
+    Overwrites the file with the given content.
+    """
+    # Ensure the folder exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     print(f"[write_to_file] Writing to {filename}...\n")
     with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
+
+def append_to_file(filename, content):
+    """
+    Appends the given content to the file (with a separator line).
+    """
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(content)
+        f.write("\n\n")
 
 def read_file(filename):
     print(f"[read_file] Reading from {filename}...\n")
@@ -223,7 +240,7 @@ def compile_cpp(source_file, output_file):
     compiler = "clang++"  # Use clang++ instead of g++
     print(f"[compile_cpp] Using compiler: {compiler}")
     
-    # Compile the C++ file with C++17 standard
+    # Compile the C++ file with C++17 standard and AVX2
     cmd = [compiler, "-std=c++17", "-mavx2", source_file, "-o", output_file]
     print(f"[compile_cpp] Command: {' '.join(cmd)}\n")
     
@@ -267,63 +284,76 @@ def main():
 \"\"\"{user_problem}\"\"\"
 """
 
-    # Step 1: Single-call generation (one file containing code + tests)
     print("[main] Requesting single-file C++ code (including tests) from OpenAI...\n")
     ensure_prompt_length_ok(COMBINED_PROMPT)  # Check prompt size
     single_file_code = call_openai(COMBINED_PROMPT)
 
-    # Step 2: Write it to disk
-    write_to_file(CPP_FILE, single_file_code)
-
-    # Step 3: Iterative process to fix code until tests pass or max iterations reached
+    # We will iterate up to MAX_ITERATIONS times to fix errors
     while iteration < MAX_ITERATIONS:
         iteration += 1
+
+        # 1) Write the generated code to a new file: generated_v{iteration}.cpp
+        cpp_file = os.path.join(GENERATED_FOLDER, f"generated_v{iteration}.cpp")
+        write_to_file(cpp_file, single_file_code)
+
+        # Also append the code to everything.txt
+        append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Generated Code =====\n{single_file_code}")
+
+        # 2) Compile
         print(f"[main] --- Iteration {iteration} ---\n")
-
-        # Compile the single file
         print("[main] Compiling single-file program...\n")
-        success, error_message = compile_cpp(CPP_FILE, EXECUTABLE)
+        success, error_message = compile_cpp(cpp_file, os.path.join(GENERATED_FOLDER, EXECUTABLE))
         if not success:
+            # Append compile errors to everything file
+            compile_log = f"Compilation Error (Iteration {iteration}):\n{error_message}"
+            append_to_file(EVERYTHING_FILE, compile_log)
             print(f"[main] Error compiling:\n{error_message}\n")
-            print("[main] Requesting fix from OpenAI for entire single-file code...\n")
 
+            # 3) Request fix
+            print("[main] Requesting fix from OpenAI for entire single-file code...\n")
             fix_input = (
                 f"{FIX_PROMPT}\n"
                 f"Compilation/Verbose Logging Output:\n{error_message}\n"
-                f"Current Code:\n{read_file(CPP_FILE)}"
+                f"Current Code:\n{single_file_code}"
             )
-            ensure_prompt_length_ok(fix_input)  # Check prompt size
+            ensure_prompt_length_ok(fix_input)
             single_file_code = call_openai(fix_input)
-            write_to_file(CPP_FILE, single_file_code)
             continue
 
-        # Run tests (within the same file's main)
+        # 4) Run the program (tests)
         print("[main] Running the program (which should include tests)...\n")
-        test_success, test_output = run_executable(EXECUTABLE)
+        test_success, test_output = run_executable(os.path.join(GENERATED_FOLDER, EXECUTABLE))
         print("[main] Program/Test output:")
         print("--------------------------")
         print(test_output)
         print("--------------------------\n")
+
+        # Save the test output to a file: generated_v{iteration}_output.txt
+        output_file = os.path.join(GENERATED_FOLDER, f"generated_v{iteration}_output.txt")
+        write_to_file(output_file, test_output)
+
+        # Also append the test output to everything.txt
+        append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Test Output =====\n{test_output}")
 
         if test_success:
             print("[main] The program/test run succeeded (exit code = 0). Tests passed!\n")
             break
         else:
             print("[main] The program/test run failed (non-zero exit). Requesting fix...\n")
-
             fix_input = (
                 f"{FIX_PROMPT}\n"
                 f"Runtime/Verbose Logging Output:\n{test_output}\n"
-                f"Current Code:\n{read_file(CPP_FILE)}"
+                f"Current Code:\n{single_file_code}"
             )
-            ensure_prompt_length_ok(fix_input)  # Check prompt size
+            ensure_prompt_length_ok(fix_input)
             single_file_code = call_openai(fix_input)
-            write_to_file(CPP_FILE, single_file_code)
 
     else:
         print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without passing tests.\n")
 
     print("[main] Process finished.\n")
+    print(f"[main] All generated code and outputs have been saved in the '{GENERATED_FOLDER}' folder.")
+    print(f"[main] A combined log of everything can be found in '{EVERYTHING_FILE}'.")
 
 if __name__ == "__main__":
     main()
