@@ -2,6 +2,7 @@ import os
 import subprocess
 from dotenv import load_dotenv
 from openai import OpenAI
+import helpers
 
 # ------------------ Configuration ------------------ #
 
@@ -12,8 +13,8 @@ Points repel each other
 Connected by springs
 SIMD
 """
+USE_DEBUG_PROMPT = False
 DEBUG_MODE = False  # Toggle this to True for local debugging without API calls
-# DEBUG_MODE = True 
 # MODEL_NAME = "gpt-4o-mini"
 MODEL_NAME = "o1-mini"
 MAX_ITERATIONS = 4
@@ -52,106 +53,7 @@ Do NOT put code in ```cpp blocks.
 # We will crash if prompts exceed this length
 MAX_PROMPT_LENGTH = 25000
 
-# ------------------ Debug Mode Hard-Coded Responses ------------------ #
-
-# A simple valid C++ file
-DEBUG_VALID_CODE = r"""
-#include <iostream>
-#include <cassert>
-#include <array>
-#include <algorithm>
-#include <numeric>
-
-template <typename T, std::size_t N>
-class SIMDStructOfArrays {
-public:
-    SIMDStructOfArrays() = default;
-
-    void set(std::size_t index, const std::array<T, N>& values) {
-        assert(index < N);
-        data[index] = values;
-    }
-
-    std::array<T, N> get(std::size_t index) const {
-        assert(index < N);
-        return data[index];
-    }
-
-    std::array<T, N> sum() const {
-        std::array<T, N> result{};
-        for (const auto& arr : data) {
-            for (std::size_t i = 0; i < N; ++i) {
-                result[i] += arr[i];
-            }
-        }
-        return result;
-    }
-
-    std::array<T, N> multiply(const std::array<T, N>& factors) const {
-        std::array<T, N> result{};
-        for (const auto& arr : data) {
-            for (std::size_t i = 0; i < N; ++i) {
-                result[i] += arr[i] * factors[i];
-            }
-        }
-        return result;
-    }
-
-    void clear() {
-        for (auto& arr : data) {
-            arr.fill(T{});
-        }
-    }
-
-private:
-    std::array<std::array<T, N>, N> data{};
-};
-
-void run_tests() {
-    SIMDStructOfArrays<int, 3> simd;
-
-    // Test setting and getting values
-    simd.set(0, {1, 2, 3});
-    simd.set(1, {4, 5, 6});
-    simd.set(2, {7, 8, 9});
-
-    assert((simd.get(0) == std::array<int, 3>{1, 2, 3}));
-    assert((simd.get(1) == std::array<int, 3>{4, 5, 6}));
-    assert((simd.get(2) == std::array<int, 3>{7, 8, 9}));
-
-    // Test sum
-    assert((simd.sum() == std::array<int, 3>{12, 15, 18}));
-
-    // Test multiplication
-    assert((simd.multiply({1, 1, 1}) == std::array<int, 3>{12, 15, 18}));
-    assert((simd.multiply({2, 2, 2}) == std::array<int, 3>{24, 30, 36}));
-
-    // Test clear
-    simd.clear();
-    assert((simd.get(0) == std::array<int, 3>{0, 0, 0}));
-    assert((simd.get(1) == std::array<int, 3>{0, 0, 0}));
-    assert((simd.get(2) == std::array<int, 3>{0, 0, 0}));
-
-    // Test out of bounds
-    bool caught_exception = false;
-    try {
-        simd.get(3); // Out of bounds
-    } catch (const std::out_of_range&) {
-        caught_exception = true;
-    }
-    assert(caught_exception);
-
-    std::cout << "All tests passed!" << std::endl;
-}
-
-int main() {
-    run_tests();
-    return 0;
-}
-"""
-
-# A trivial fix response, just re-sending the same file in case of errors:
-DEBUG_FIX_CODE = DEBUG_VALID_CODE
+DEBUG_FIX_CODE = helpers.DEBUG_VALID_CODE
 
 # ------------------ Setup OpenAI ------------------ #
 
@@ -273,7 +175,7 @@ def main():
     # Prompt the user for the problem they want solved
     user_problem = ""
     if not DEBUG_MODE:
-        if DEBUG_PROMPT != "":
+        if USE_DEBUG_PROMPT:
             user_problem = DEBUG_PROMPT
         else:
             user_problem = input("Enter the problem you want solved: ")
