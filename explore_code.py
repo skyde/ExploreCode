@@ -9,16 +9,17 @@ import helpers
 
 # DEBUG_PROMPT = "SIMD struct of arrays class that uses SIMD operations (AVX2)"
 DEBUG_PROMPT = """
-Ball and point based simulation
-Points repel each other
-Connected by springs
-SIMD
+- Generate a 1024x1024x1024 bit vector object
+- the sphere has a radius of 500 and can be anywhere in there
+- The test should run a benchmark on how long it takes to generate. The test only passes it if takes less than 10 microseconds
+- Use SIMD operations (AVX2)
+- Only use a single core
 """
-USE_DEBUG_PROMPT = False
+USE_DEBUG_PROMPT = True
 DEBUG_MODE = False  # Toggle this to True for local debugging without API calls
 # MODEL_NAME = "gpt-4o-mini"
 MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 4
+MAX_ITERATIONS = 20
 
 # We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
 # as well as corresponding output logs: generated_v1_output.txt, etc.
@@ -51,7 +52,7 @@ Do NOT put code in ```cpp blocks.
 """
 
 # We will crash if prompts exceed this length
-MAX_PROMPT_LENGTH = 25000
+MAX_PROMPT_LENGTH = 50000
 
 DEBUG_FIX_CODE = helpers.DEBUG_VALID_CODE
 
@@ -68,6 +69,17 @@ def ensure_prompt_length_ok(prompt, max_length=MAX_PROMPT_LENGTH):
     """
     if len(prompt) > max_length:
         raise ValueError(f"Prompt length {len(prompt)} exceeded maximum of {max_length} characters. Exiting...")
+
+def maybe_truncate_for_llm(content, max_length=10000):
+    """
+    If content is longer than max_length, truncate the middle and add a note.
+    """
+    if len(content) <= max_length:
+        return content
+    half = max_length // 2
+    start_part = content[:half]
+    end_part = content[-half:]
+    return start_part + "\n... [TRUNCATED MIDDLE FOR LLM] ...\n" + end_part
 
 # ------------------ OpenAI Helpers ------------------ #
 
@@ -156,15 +168,20 @@ def compile_cpp(source_file, output_file):
 def run_executable(executable):
     """
     Runs the executable file and returns (success, combined_output).
+    Includes a timeout to avoid infinite loops.
     """
     print(f"[run_executable] Running ./{executable}...\n")
     cmd = [f"./{executable}"]
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
+        # Timeout prevents infinite loops.
+        out, err = process.communicate(timeout=30)  
         return (process.returncode == 0, out.decode("utf-8") + "\n" + err.decode("utf-8"))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return (False, "Timeout expired while running the code. Possibly an infinite loop.\n")
     except FileNotFoundError:
-        return (False, f"Executable '{executable}' not found. Ensure it was created successfully.")
+        return (False, f"Executable '{executable}' not found. Ensure it was created successfully.\n")
 
 # ------------------ Main Logic ------------------ #
 
@@ -220,17 +237,22 @@ def main():
         print(f"[main] --- Iteration {iteration} ---\n")
         print("[main] Compiling single-file program...\n")
         success, error_message = compile_cpp(cpp_file, os.path.join(session_folder, EXECUTABLE))
-        if not success:
-            # Append compile errors to everything.cpp
-            compile_log = f"Compilation Error (Iteration {iteration}):\n{error_message}"
-            append_to_file(EVERYTHING_FILE, compile_log)
-            print(f"[main] Error compiling:\n{error_message}\n")
 
+        # Always save compile output to a file and append to everything (even if success or error).
+        compile_output_file = os.path.join(session_folder, f"generated_v{iteration}_compile.txt")
+        write_to_file(compile_output_file, error_message)
+        append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Compile Output =====\n{error_message}")
+
+        if not success:
+            print(f"[main] Error compiling:\n{error_message}\n")
             # 3) Request fix
             print("[main] Requesting fix from OpenAI for entire single-file code...\n")
+
+            # Truncate compile log if needed before passing to LLM
+            truncated_compile_log = maybe_truncate_for_llm(error_message, max_length=7000)
             fix_input = (
                 f"{FIX_PROMPT}\n"
-                f"Compilation/Verbose Logging Output:\n{error_message}\n"
+                f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
                 f"Current Code:\n{single_file_code}"
             )
             ensure_prompt_length_ok(fix_input)
@@ -245,11 +267,9 @@ def main():
         print(test_output)
         print("--------------------------\n")
 
-        # Save the test output to a file: generated_v{iteration}_output.txt
+        # Save the test output to a file (always) and append
         output_file = os.path.join(session_folder, f"generated_v{iteration}_output.txt")
         write_to_file(output_file, test_output)
-
-        # Also append the test output to everything.cpp
         append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Test Output =====\n{test_output}")
 
         if test_success:
@@ -257,9 +277,11 @@ def main():
             break
         else:
             print("[main] The program/test run failed (non-zero exit). Requesting fix...\n")
+            # Truncate run log if needed before passing to LLM
+            truncated_test_output = maybe_truncate_for_llm(test_output, max_length=7000)
             fix_input = (
                 f"{FIX_PROMPT}\n"
-                f"Runtime/Verbose Logging Output:\n{test_output}\n"
+                f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
                 f"Current Code:\n{single_file_code}"
             )
             ensure_prompt_length_ok(fix_input)
@@ -271,6 +293,7 @@ def main():
     print("[main] Process finished.\n")
     print(f"[main] All generated code and outputs have been saved in the '{session_folder}' folder.")
     print(f"[main] A combined log of everything can be found in '{EVERYTHING_FILE}'.")
+
 
 if __name__ == "__main__":
     main()
