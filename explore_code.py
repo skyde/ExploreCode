@@ -1,5 +1,6 @@
 import os
 import subprocess
+import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
@@ -21,9 +22,8 @@ MAX_ITERATIONS = 4
 
 # We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
 # as well as corresponding output logs: generated_v1_output.txt, etc.
-# and a combined file everything.txt in the generated/ subfolder
-GENERATED_FOLDER = "generated"
-EVERYTHING_FILE = os.path.join(GENERATED_FOLDER, "everything.cpp")
+# and a combined file everything.cpp in a unique generated/<timestamp>/ subfolder
+GENERATED_ROOT_FOLDER = "generated"
 
 EXECUTABLE = "program"  # We'll compile the code to a program each iteration
 PRINT_SEND = True
@@ -172,6 +172,15 @@ def main():
     print("[main] Starting code generation & testing process.\n")
     iteration = 0
 
+    # Create a new subfolder in "generated/" with a timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
+    os.makedirs(session_folder, exist_ok=True)
+
+    # We'll store everything in session_folder
+    EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
+    PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
+
     # Prompt the user for the problem they want solved
     user_problem = ""
     if not DEBUG_MODE:
@@ -183,8 +192,14 @@ def main():
     # Construct the prompt dynamically
     COMBINED_PROMPT = f"""
 {GENERATE_PROMPT}
-\"\"\"{user_problem}\"\"\"
+\"\"\"{user_problem}\"\"\" 
 """
+
+    # Write the prompt to its own file
+    write_to_file(PROMPT_FILE, user_problem)
+
+    # Write the prompt at the start of everything.cpp so we can track it there too
+    append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_problem}\n\n")
 
     print("[main] Requesting single-file C++ code (including tests) from OpenAI...\n")
     ensure_prompt_length_ok(COMBINED_PROMPT)  # Check prompt size
@@ -195,18 +210,18 @@ def main():
         iteration += 1
 
         # 1) Write the generated code to a new file: generated_v{iteration}.cpp
-        cpp_file = os.path.join(GENERATED_FOLDER, f"generated_v{iteration}.cpp")
+        cpp_file = os.path.join(session_folder, f"generated_v{iteration}.cpp")
         write_to_file(cpp_file, single_file_code)
 
-        # Also append the code to everything.txt
+        # Also append the code to everything.cpp
         append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Generated Code =====\n{single_file_code}")
 
         # 2) Compile
         print(f"[main] --- Iteration {iteration} ---\n")
         print("[main] Compiling single-file program...\n")
-        success, error_message = compile_cpp(cpp_file, os.path.join(GENERATED_FOLDER, EXECUTABLE))
+        success, error_message = compile_cpp(cpp_file, os.path.join(session_folder, EXECUTABLE))
         if not success:
-            # Append compile errors to everything file
+            # Append compile errors to everything.cpp
             compile_log = f"Compilation Error (Iteration {iteration}):\n{error_message}"
             append_to_file(EVERYTHING_FILE, compile_log)
             print(f"[main] Error compiling:\n{error_message}\n")
@@ -224,17 +239,17 @@ def main():
 
         # 4) Run the program (tests)
         print("[main] Running the program (which should include tests)...\n")
-        test_success, test_output = run_executable(os.path.join(GENERATED_FOLDER, EXECUTABLE))
+        test_success, test_output = run_executable(os.path.join(session_folder, EXECUTABLE))
         print("[main] Program/Test output:")
         print("--------------------------")
         print(test_output)
         print("--------------------------\n")
 
         # Save the test output to a file: generated_v{iteration}_output.txt
-        output_file = os.path.join(GENERATED_FOLDER, f"generated_v{iteration}_output.txt")
+        output_file = os.path.join(session_folder, f"generated_v{iteration}_output.txt")
         write_to_file(output_file, test_output)
 
-        # Also append the test output to everything.txt
+        # Also append the test output to everything.cpp
         append_to_file(EVERYTHING_FILE, f"===== Iteration {iteration}: Test Output =====\n{test_output}")
 
         if test_success:
@@ -254,7 +269,7 @@ def main():
         print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without passing tests.\n")
 
     print("[main] Process finished.\n")
-    print(f"[main] All generated code and outputs have been saved in the '{GENERATED_FOLDER}' folder.")
+    print(f"[main] All generated code and outputs have been saved in the '{session_folder}' folder.")
     print(f"[main] A combined log of everything can be found in '{EVERYTHING_FILE}'.")
 
 if __name__ == "__main__":
