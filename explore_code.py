@@ -5,17 +5,16 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
 
-# TODO: Keep sending the original prompt while doing iterations so it does not lose that context
-
 # ------------------ Configuration ------------------ #
 
 # DEBUG_PROMPT = "SIMD struct of arrays class that uses SIMD operations (AVX2)"
 # DEBUG_PROMPT = """
-# - Generate a 1024x1024x1024 bit vector object split into 8x8x8 blocks
-# - The object is a pyramid which has a radius of 500 and can be anywhere in there
-# - The test should run a benchmark on how long it takes to generate. The test only passes it if takes less than 5 microseconds
+# - Generate a bit vector sphere of an specified size
+# - The bit vector is split into 8x8x8 regions (each region has contigious memory)
+# - Optimize for a radius of about 100 to 1000
 # - Use SIMD operations (AVX2)
 # - Only use a single core
+# - Make as fast as possible
 # """
 DEBUG_PROMPT = """
 - Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
@@ -26,10 +25,10 @@ DEBUG_PROMPT = """
 - Only use a single core
 """
 USE_DEBUG_PROMPT = False
-DEBUG_MODE = False  # Toggle this to True for local debugging without API calls
-# MODEL_NAME = "gpt-4o-mini"
-MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 1
+INITAL_MODEL_NAME = "o1-preview"
+# INITAL_MODEL_NAME = "o1-mini"
+FIX_MODEL_NAME = "o1-mini"
+MAX_ITERATIONS = 4
 
 # We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
 # as well as corresponding output logs: generated_v1_output.txt, etc.
@@ -39,7 +38,7 @@ GENERATED_ROOT_FOLDER = "generated"
 EXECUTABLE = "program"  # We'll compile the code to a program each iteration
 PRINT_SEND = True
 
-GENERATE_PROMPT = r"""
+GENERATE_PROMPT_SYSTEM = r"""
 Write a single C++17 file which I'll call 'generated.cpp'. 
 Your solution must:
 - Include a main() function that unit tests the relevant functionality using <cassert>.
@@ -48,7 +47,9 @@ Your solution must:
 - If any test fails, the program should exit with a non-zero return code.
 - Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
 - Do NOT put code in ```cpp blocks.
+"""
 
+GENERATE_PROMPT_USER = r"""
 Please solve the following problem:
 """
 
@@ -93,40 +94,38 @@ def maybe_truncate_for_llm(content, max_length=10000):
 
 # ------------------ OpenAI Helpers ------------------ #
 
-def call_openai(prompt, model=MODEL_NAME, temperature=0.2):
+def call_openai(system_prompt, user_prompt, model, temperature=0.2):
     """
-    Calls the OpenAI client using the given prompt, unless DEBUG_MODE is True.
+    Calls the OpenAI client using the given prompt.
     Returns the response text.
     """
-    if DEBUG_MODE:
-        # Skip calling the API, return a hard-coded successful snippet
-        # or a fix snippet, depending on how you want to debug.
-        print("[call_openai] DEBUG_MODE is True, returning hard-coded response.\n")
-        if "Please fix" in prompt:
-            return DEBUG_FIX_CODE
-        else:
-            return DEBUG_VALID_CODE
-    else:
-        if PRINT_SEND:
-            print("[call_openai] Sending prompt to OpenAI:")
-            print("----------------------------------------")
-            print(prompt)
-            print("----------------------------------------\n")
+    if PRINT_SEND:
+        print("[call_openai] Sending prompt to OpenAI:")
+        print("------------------ System --------------")
+        print(system_prompt)
+        print("------------------ User ----------------\n")
+        print(user_prompt)
+        print("----------------------------------------\n")
 
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=model
-            # temperature=temperature
-        )
+    # For non supported models just use user
+    system_role = "user"
 
-        answer = response.choices[0].message.content
+    # if model == "o1" or model == "o1-preview":
+        # system_role = "developer"
 
-        print("[call_openai] Received response from OpenAI:")
-        print("--------------------------------------------")
-        print(answer)
-        print("--------------------------------------------\n")
+    response = client.chat.completions.create(
+        messages=[{"role": system_role, "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        model=model
+    )
 
-        return answer
+    answer = response.choices[0].message.content
+
+    print("[call_openai] Received response from OpenAI:")
+    print("--------------------------------------------")
+    print(answer)
+    print("--------------------------------------------\n")
+
+    return answer
 
 # ------------------ File Helpers ------------------ #
 
@@ -210,31 +209,24 @@ def main():
 
     # Prompt the user for the problem they want solved
     user_problem = ""
-    if not DEBUG_MODE:
-        if USE_DEBUG_PROMPT:
-            user_problem = DEBUG_PROMPT
-        else:
-            print("Enter the problem you want solved:")
-            print("(Input is multi-line so press enter twice to finish)")
-            # user_problem = ""
-            lines = []
-            lines.append("")
-
-            while True:
-                line = input()
-                if not line.strip():
-                    break
-                lines.append(line)
-
-            lines.append("")
-
-            user_problem = "\n".join(lines)
-            # user_problem.append(line)
-            # user_problem = input("Enter the problem you want solved: ")
+    if USE_DEBUG_PROMPT:
+        user_problem = DEBUG_PROMPT
+    else:
+        print("Enter the problem you want solved:")
+        print("(Input is multi-line so press enter twice to finish)")
+        lines = []
+        lines.append("")
+        while True:
+            line = input()
+            if not line.strip():
+                break
+            lines.append(line)
+        lines.append("")
+        user_problem = "\n".join(lines)
 
     # Construct the prompt dynamically
-    COMBINED_PROMPT = f"""
-{GENERATE_PROMPT}
+    COMBINED_PROMPT_USER = f"""
+{GENERATE_PROMPT_USER}
 \"\"\"{user_problem}\"\"\" 
 """
 
@@ -245,8 +237,8 @@ def main():
     append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_problem}\n\n")
 
     print("[main] Requesting single-file C++ code (including tests) from OpenAI...\n")
-    ensure_prompt_length_ok(COMBINED_PROMPT)  # Check prompt size
-    single_file_code = call_openai(COMBINED_PROMPT)
+    ensure_prompt_length_ok(COMBINED_PROMPT_USER)  # Check prompt size
+    single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, COMBINED_PROMPT_USER, INITAL_MODEL_NAME)
 
     # We will iterate up to MAX_ITERATIONS times to fix errors
     while iteration < MAX_ITERATIONS:
@@ -282,7 +274,7 @@ def main():
                 f"Current Code:\n{single_file_code}"
             )
             ensure_prompt_length_ok(fix_input)
-            single_file_code = call_openai(fix_input)
+            single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
             continue
 
         # 4) Run the program (tests)
@@ -311,7 +303,7 @@ def main():
                 f"Current Code:\n{single_file_code}"
             )
             ensure_prompt_length_ok(fix_input)
-            single_file_code = call_openai(fix_input)
+            single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
 
     else:
         print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without passing tests.\n")
