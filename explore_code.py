@@ -5,21 +5,31 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
 
+# TODO: Keep sending the original prompt while doing iterations so it does not lose that context
+
 # ------------------ Configuration ------------------ #
 
 # DEBUG_PROMPT = "SIMD struct of arrays class that uses SIMD operations (AVX2)"
+# DEBUG_PROMPT = """
+# - Generate a 1024x1024x1024 bit vector object split into 8x8x8 blocks
+# - The object is a pyramid which has a radius of 500 and can be anywhere in there
+# - The test should run a benchmark on how long it takes to generate. The test only passes it if takes less than 5 microseconds
+# - Use SIMD operations (AVX2)
+# - Only use a single core
+# """
 DEBUG_PROMPT = """
-- Generate a 1024x1024x1024 bit vector object
-- the sphere has a radius of 500 and can be anywhere in there
-- The test should run a benchmark on how long it takes to generate. The test only passes it if takes less than 10 microseconds
+- Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
+- Each node is connected to 1-8 other nodes
+- The algorithm should be very efficient, and create benchmarks to verify performance
+- Use a 'bit matrix' to accelerate the connectivity clustering, using 256 bit registers, and clever use of intrinsics and bit manipulation operations to accelerate (e.g. bitwise OR)
 - Use SIMD operations (AVX2)
 - Only use a single core
 """
-USE_DEBUG_PROMPT = True
+USE_DEBUG_PROMPT = False
 DEBUG_MODE = False  # Toggle this to True for local debugging without API calls
 # MODEL_NAME = "gpt-4o-mini"
 MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 20
+MAX_ITERATIONS = 1
 
 # We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
 # as well as corresponding output logs: generated_v1_output.txt, etc.
@@ -204,7 +214,23 @@ def main():
         if USE_DEBUG_PROMPT:
             user_problem = DEBUG_PROMPT
         else:
-            user_problem = input("Enter the problem you want solved: ")
+            print("Enter the problem you want solved:")
+            print("(Input is multi-line so press enter twice to finish)")
+            # user_problem = ""
+            lines = []
+            lines.append("")
+
+            while True:
+                line = input()
+                if not line.strip():
+                    break
+                lines.append(line)
+
+            lines.append("")
+
+            user_problem = "\n".join(lines)
+            # user_problem.append(line)
+            # user_problem = input("Enter the problem you want solved: ")
 
     # Construct the prompt dynamically
     COMBINED_PROMPT = f"""
