@@ -28,7 +28,7 @@ USE_DEBUG_PROMPT = False
 INITAL_MODEL_NAME = "o1-preview"
 # INITAL_MODEL_NAME = "o1-mini"
 FIX_MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 4
+MAX_ITERATIONS = 16
 
 # We'll now generate per-iteration files: generated_v1.cpp, generated_v2.cpp, etc.
 # as well as corresponding output logs: generated_v1_output.txt, etc.
