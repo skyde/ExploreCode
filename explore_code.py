@@ -400,16 +400,18 @@ def cli_main():
 
 # ------------------ GUI Enhancements ------------------ #
 
-# We'll keep a global iteration history in memory so we can show it in the GUI.
-# Each entry: { 'label': ..., 'code': ..., 'output': ..., 'compile_err': ... }
 iteration_history = []
 
-def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_history):
+def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_history, root):
     """
     This function encapsulates the generation/fix loop using the user-provided code and prompt,
-    mimicking the CLI approach but storing info in `iteration_history`.
+    storing iteration info in `iteration_history`. 
+    Now also updates the GUI in real-time so you can watch each iteration.
     """
-    # Create a new subfolder for every run
+    text_output_widget.insert(tk.END, "[GUI] Starting generation process...\n")
+    text_output_widget.see(tk.END)
+    root.update_idletasks()
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_gui_{timestamp}")
     os.makedirs(session_folder, exist_ok=True)
@@ -417,12 +419,11 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
     EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
     PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
 
-    # Step 1: If code_input is not empty, try to compile/run it first
     initial_code_success = False
     single_file_code = ""
 
+    # 1) Attempt with user-provided code_input first (if any)
     if code_input.strip():
-        # compile & run
         iteration_label = "Initial Code"
         code_filename = os.path.join(session_folder, "initial_code.cpp")
 
@@ -439,11 +440,20 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
         iteration_history.append(iteration_data)
         listbox_history.insert(tk.END, iteration_label)
 
+        # Show partial output in real-time
+        text_output_widget.insert(tk.END, f"[GUI] {iteration_label}:\n")
+        if compile_err:
+            text_output_widget.insert(tk.END, compile_err + "\n\n")
+        else:
+            text_output_widget.insert(tk.END, runtime_out + "\n\n")
+        text_output_widget.see(tk.END)
+        root.update_idletasks()
+
         if success:
             initial_code_success = True
         else:
+            # If compile error, attempt fix
             if compile_err:
-                # We fix it
                 truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                 fix_input = (
                     f"{FIX_PROMPT}\n"
@@ -453,7 +463,10 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                 ensure_prompt_length_ok(fix_input)
                 single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
 
-                # Use fix loop
+                text_output_widget.insert(tk.END, "[GUI] Fixing compile error...\n")
+                text_output_widget.see(tk.END)
+                root.update_idletasks()
+
                 success_fix, fixed_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
                 )
@@ -467,9 +480,14 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                 iteration_history.append(iteration_data)
                 listbox_history.insert(tk.END, iteration_data['label'])
 
+                text_output_widget.insert(tk.END, "[GUI] Compile fix pass done.\n")
+                text_output_widget.see(tk.END)
+                root.update_idletasks()
+
                 if success_fix:
                     initial_code_success = True
                     single_file_code = fixed_code
+
             else:
                 # It's a runtime error
                 truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
@@ -480,6 +498,10 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                 )
                 ensure_prompt_length_ok(fix_input)
                 single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+
+                text_output_widget.insert(tk.END, "[GUI] Fixing runtime error...\n")
+                text_output_widget.see(tk.END)
+                root.update_idletasks()
 
                 success_fix, fixed_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
@@ -493,18 +515,22 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                 iteration_history.append(iteration_data)
                 listbox_history.insert(tk.END, iteration_data['label'])
 
+                text_output_widget.insert(tk.END, "[GUI] Runtime fix pass done.\n")
+                text_output_widget.see(tk.END)
+                root.update_idletasks()
+
                 if success_fix:
                     initial_code_success = True
                     single_file_code = fixed_code
 
-    # Step 2: If code is not provided or if it didn't succeed, we generate from prompt
+    # 2) If code not provided or still not success, attempt generation from user_prompt
     if not initial_code_success:
         if not user_prompt.strip():
-            # If user didn't provide a prompt, nothing to do
-            text_output_widget.insert(tk.END, "[GUI] No code or prompt provided. Nothing to do.\n")
+            text_output_widget.insert(tk.END, "[GUI] No code or prompt provided. Stopping.\n")
+            text_output_widget.see(tk.END)
+            root.update_idletasks()
             return
 
-        # Write prompt to file
         write_to_file(PROMPT_FILE, user_prompt)
         append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_prompt}\n\n")
 
@@ -537,11 +563,19 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
             iteration_history.append(iteration_data)
             listbox_history.insert(tk.END, iteration_label)
 
+            # Real-time UI update
+            text_output_widget.insert(tk.END, f"[GUI] {iteration_label}:\n")
+            if compile_err:
+                text_output_widget.insert(tk.END, compile_err + "\n\n")
+            else:
+                text_output_widget.insert(tk.END, runtime_out + "\n\n")
+            text_output_widget.see(tk.END)
+            root.update_idletasks()
+
             if success:
                 break
             else:
                 if compile_err:
-                    # fix compile
                     truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                     fix_input = (
                         f"{FIX_PROMPT}\n"
@@ -550,8 +584,12 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                     )
                     ensure_prompt_length_ok(fix_input)
                     single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
+
+                    text_output_widget.insert(tk.END, "[GUI] Attempting compile fix...\n")
+                    text_output_widget.see(tk.END)
+                    root.update_idletasks()
+
                 else:
-                    # fix runtime
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
                         f"{FIX_PROMPT}\n"
@@ -560,23 +598,31 @@ def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_hist
                     )
                     ensure_prompt_length_ok(fix_input)
                     single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
+
+                    text_output_widget.insert(tk.END, "[GUI] Attempting runtime fix...\n")
+                    text_output_widget.see(tk.END)
+                    root.update_idletasks()
         else:
-            text_output_widget.insert(tk.END,
-                f"[GUI] Reached the maximum iterations ({MAX_ITERATIONS}) without a passing test.\n"
+            text_output_widget.insert(
+                tk.END,
+                f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n"
             )
+            text_output_widget.see(tk.END)
+            root.update_idletasks()
 
-    # Once done, let the user know
-    text_output_widget.insert(tk.END, "[GUI] Process finished. Check the 'History' list to review iterations.\n")
+    text_output_widget.insert(tk.END, "[GUI] Process finished. Check 'History' for details.\n")
+    text_output_widget.see(tk.END)
+    root.update_idletasks()
 
-def on_run_button_click(code_text, prompt_entry, output_text, history_list):
+def on_run_button_click(code_text, prompt_text, output_text, history_list, root):
     # Clear output
     output_text.delete("1.0", tk.END)
 
     code_input = code_text.get("1.0", tk.END)
-    user_prompt = prompt_entry.get()
+    user_prompt = prompt_text.get("1.0", tk.END)
 
     # Actually run the generation/fix logic
-    run_generation_gui(code_input, user_prompt, output_text, history_list)
+    run_generation_gui(code_input, user_prompt, output_text, history_list, root)
 
 def on_history_select(evt, code_text, output_text, history_list):
     """
@@ -588,26 +634,35 @@ def on_history_select(evt, code_text, output_text, history_list):
     index = int(w.curselection()[0])
     data = iteration_history[index]
 
-    # Show code in code_text
     code_text.delete("1.0", tk.END)
     code_text.insert(tk.END, data['code'])
 
-    # Show output in output_text
     output_text.delete("1.0", tk.END)
-    # If there's a compile_err, that typically is the key error info:
     if data['compile_err']:
         output_text.insert(tk.END, "[Compile Error]\n" + data['compile_err'] + "\n\n")
     output_text.insert(tk.END, data['output'])
 
 def gui_main():
     """
-    Launches the Tkinter GUI, letting the user paste code, specify a prompt,
-    run the generation loop, view outputs, and inspect past iterations.
+    Launches the Tkinter GUI, letting the user paste code, specify a multi-line prompt,
+    run the generation loop with real-time iteration updates, view logs, and inspect past runs.
     """
     root = tk.Tk()
-    root.title("C++ Generation & Fixer GUI")
+    root.title("C++ Generation & Fixer GUI (Dark Mode)")
 
-    # Window layout
+    # ------------------ Dark Theme Setup ------------------ #
+    style = ttk.Style()
+    style.theme_use('clam')
+    # General background/foreground
+    style.configure(".", background="gray15", foreground="white")
+    style.configure("TFrame", background="gray15", foreground="white")
+    style.configure("TLabel", background="gray15", foreground="white")
+    style.configure("TButton", background="gray25", foreground="white")
+    style.configure("TScrollbar", background="gray25")
+    # We'll manually config scrolledtext, listbox, etc. below
+
+    root.configure(bg="gray15")
+
     top_frame = ttk.Frame(root, padding="5")
     top_frame.pack(side=tk.TOP, fill=tk.X)
 
@@ -616,36 +671,43 @@ def gui_main():
 
     code_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, width=100, height=15)
     code_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    code_text.config(bg="gray20", fg="white", insertbackground="white")
 
-    prompt_label = ttk.Label(top_frame, text="Prompt:")
+    prompt_label = ttk.Label(top_frame, text="Prompt (multi-line):")
     prompt_label.pack(side=tk.TOP, anchor=tk.W)
 
-    prompt_entry = ttk.Entry(top_frame, width=100)
-    prompt_entry.pack(side=tk.TOP, fill=tk.X, expand=True)
+    # Multi-line prompt
+    prompt_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, width=100, height=6)
+    prompt_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    prompt_text.config(bg="gray20", fg="white", insertbackground="white")
 
     run_button = ttk.Button(top_frame, text="Run Generation",
-                            command=lambda: on_run_button_click(code_text, prompt_entry, output_text, history_list))
+                            command=lambda: on_run_button_click(code_text, prompt_text, output_text, history_list, root))
     run_button.pack(side=tk.TOP, pady=5)
 
     bottom_frame = ttk.Frame(root, padding="5")
     bottom_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    # History panel
-    history_label = ttk.Label(bottom_frame, text="Past Generations / Fixes:")
-    history_label.pack(side=tk.LEFT, anchor=tk.N)
+    history_frame = ttk.Frame(bottom_frame)
+    history_frame.pack(side=tk.LEFT, fill=tk.Y)
 
-    history_list = tk.Listbox(bottom_frame, width=30)
-    history_list.pack(side=tk.LEFT, fill=tk.Y)
+    history_label = ttk.Label(history_frame, text="Past Generations / Fixes:")
+    history_label.pack(side=tk.TOP, anchor=tk.N)
+
+    history_list = tk.Listbox(history_frame, width=30, bg="gray20", fg="white", selectbackground="gray40")
+    history_list.pack(side=tk.TOP, fill=tk.Y, expand=True)
     history_list.bind('<<ListboxSelect>>', lambda evt: on_history_select(evt, code_text, output_text, history_list))
 
-    # Output panel
-    output_label = ttk.Label(bottom_frame, text="Output (Compile/Error/Run Logs):")
+    output_frame = ttk.Frame(bottom_frame)
+    output_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    output_label = ttk.Label(output_frame, text="Output (Compile/Error/Run Logs):")
     output_label.pack(side=tk.TOP, anchor=tk.W)
 
-    output_text = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, width=80, height=20)
-    output_text.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+    output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD, width=80, height=20)
+    output_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    output_text.config(bg="gray20", fg="white", insertbackground="white")
 
-    # Start main loop
     root.mainloop()
 
 # ------------------ Entry Point ------------------ #
