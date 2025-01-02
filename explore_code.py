@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import subprocess
@@ -5,6 +7,8 @@ import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
+import tkinter as tk
+from tkinter import ttk, scrolledtext
 
 # ------------------ Configuration ------------------ #
 
@@ -270,9 +274,14 @@ def compile_run_check_code(
         print("[main] Code run succeeded (exit code = 0). Tests passed!\n")
         return (True, "", test_output)
 
-# ------------------ Main Logic ------------------ #
+# ------------------ CLI Main (Original Process) ------------------ #
 
-def main():
+def cli_main():
+    """
+    This is the original 'main()' function from the code.
+    It reads code from stdin, tries to compile & run it, or else
+    generates new code from a prompt. All logic remains unchanged.
+    """
     print("[main] Starting code generation & testing process.\n")
 
     # Create a new subfolder in "generated/" with a timestamp
@@ -284,7 +293,7 @@ def main():
     PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
 
     # ------------------ Read code from stdin ------------------ #
-    print("[main] Please enter your initial code if needed (Ctrl+Z on Windows to finish):\n")
+    print("[main] Please enter your initial code if needed (Ctrl+Z on Windows or Ctrl+D on Linux/Mac to finish):\n")
     initial_code = sys.stdin.read()
 
     initial_code_success = False
@@ -389,6 +398,261 @@ def main():
     print(f"[main] All generated code and outputs have been saved in the '{session_folder}' folder.")
     print(f"[main] A combined log of everything can be found in '{EVERYTHING_FILE}'.\n")
 
+# ------------------ GUI Enhancements ------------------ #
+
+# We'll keep a global iteration history in memory so we can show it in the GUI.
+# Each entry: { 'label': ..., 'code': ..., 'output': ..., 'compile_err': ... }
+iteration_history = []
+
+def run_generation_gui(code_input, user_prompt, text_output_widget, listbox_history):
+    """
+    This function encapsulates the generation/fix loop using the user-provided code and prompt,
+    mimicking the CLI approach but storing info in `iteration_history`.
+    """
+    # Create a new subfolder for every run
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_gui_{timestamp}")
+    os.makedirs(session_folder, exist_ok=True)
+
+    EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
+    PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
+
+    # Step 1: If code_input is not empty, try to compile/run it first
+    initial_code_success = False
+    single_file_code = ""
+
+    if code_input.strip():
+        # compile & run
+        iteration_label = "Initial Code"
+        code_filename = os.path.join(session_folder, "initial_code.cpp")
+
+        success, compile_err, runtime_out = compile_run_check_code(
+            code_input, code_filename, session_folder, EVERYTHING_FILE, iteration_label
+        )
+
+        iteration_data = {
+            'label': iteration_label,
+            'code': code_input,
+            'output': runtime_out if not compile_err else compile_err,
+            'compile_err': compile_err,
+        }
+        iteration_history.append(iteration_data)
+        listbox_history.insert(tk.END, iteration_label)
+
+        if success:
+            initial_code_success = True
+        else:
+            if compile_err:
+                # We fix it
+                truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
+                fix_input = (
+                    f"{FIX_PROMPT}\n"
+                    f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
+                    f"Current Code:\n{code_input}"
+                )
+                ensure_prompt_length_ok(fix_input)
+                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+
+                # Use fix loop
+                success_fix, fixed_code = fix_code_until_success_or_limit(
+                    single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
+                )
+
+                iteration_data = {
+                    'label': "Fixed Initial Code",
+                    'code': fixed_code,
+                    'output': "Fix pass completed",
+                    'compile_err': "",
+                }
+                iteration_history.append(iteration_data)
+                listbox_history.insert(tk.END, iteration_data['label'])
+
+                if success_fix:
+                    initial_code_success = True
+                    single_file_code = fixed_code
+            else:
+                # It's a runtime error
+                truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
+                fix_input = (
+                    f"{FIX_PROMPT}\n"
+                    f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
+                    f"Current Code:\n{code_input}"
+                )
+                ensure_prompt_length_ok(fix_input)
+                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+
+                success_fix, fixed_code = fix_code_until_success_or_limit(
+                    single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
+                )
+                iteration_data = {
+                    'label': "Fixed Initial Code (Runtime)",
+                    'code': fixed_code,
+                    'output': "Fix pass completed",
+                    'compile_err': "",
+                }
+                iteration_history.append(iteration_data)
+                listbox_history.insert(tk.END, iteration_data['label'])
+
+                if success_fix:
+                    initial_code_success = True
+                    single_file_code = fixed_code
+
+    # Step 2: If code is not provided or if it didn't succeed, we generate from prompt
+    if not initial_code_success:
+        if not user_prompt.strip():
+            # If user didn't provide a prompt, nothing to do
+            text_output_widget.insert(tk.END, "[GUI] No code or prompt provided. Nothing to do.\n")
+            return
+
+        # Write prompt to file
+        write_to_file(PROMPT_FILE, user_prompt)
+        append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_prompt}\n\n")
+
+        combined_prompt_user = f"""
+{GENERATE_PROMPT_USER}
+\"\"\"{user_prompt}\"\"\" 
+"""
+        ensure_prompt_length_ok(combined_prompt_user)
+        single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
+
+        # Attempt compile & run, else fix in a loop
+        for iteration in range(1, MAX_ITERATIONS + 1):
+            iteration_label = f"Generated Iteration {iteration}"
+            generated_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
+
+            success, compile_err, runtime_out = compile_run_check_code(
+                single_file_code,
+                generated_code_filename,
+                session_folder,
+                EVERYTHING_FILE,
+                iteration_label
+            )
+
+            iteration_data = {
+                'label': iteration_label,
+                'code': single_file_code,
+                'output': runtime_out if not compile_err else compile_err,
+                'compile_err': compile_err,
+            }
+            iteration_history.append(iteration_data)
+            listbox_history.insert(tk.END, iteration_label)
+
+            if success:
+                break
+            else:
+                if compile_err:
+                    # fix compile
+                    truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
+                    fix_input = (
+                        f"{FIX_PROMPT}\n"
+                        f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
+                        f"Current Code:\n{single_file_code}"
+                    )
+                    ensure_prompt_length_ok(fix_input)
+                    single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
+                else:
+                    # fix runtime
+                    truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
+                    fix_input = (
+                        f"{FIX_PROMPT}\n"
+                        f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
+                        f"Current Code:\n{single_file_code}"
+                    )
+                    ensure_prompt_length_ok(fix_input)
+                    single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
+        else:
+            text_output_widget.insert(tk.END,
+                f"[GUI] Reached the maximum iterations ({MAX_ITERATIONS}) without a passing test.\n"
+            )
+
+    # Once done, let the user know
+    text_output_widget.insert(tk.END, "[GUI] Process finished. Check the 'History' list to review iterations.\n")
+
+def on_run_button_click(code_text, prompt_entry, output_text, history_list):
+    # Clear output
+    output_text.delete("1.0", tk.END)
+
+    code_input = code_text.get("1.0", tk.END)
+    user_prompt = prompt_entry.get()
+
+    # Actually run the generation/fix logic
+    run_generation_gui(code_input, user_prompt, output_text, history_list)
+
+def on_history_select(evt, code_text, output_text, history_list):
+    """
+    When the user selects an item in the history listbox, show the code & output for that iteration.
+    """
+    w = evt.widget
+    if not w.curselection():
+        return
+    index = int(w.curselection()[0])
+    data = iteration_history[index]
+
+    # Show code in code_text
+    code_text.delete("1.0", tk.END)
+    code_text.insert(tk.END, data['code'])
+
+    # Show output in output_text
+    output_text.delete("1.0", tk.END)
+    # If there's a compile_err, that typically is the key error info:
+    if data['compile_err']:
+        output_text.insert(tk.END, "[Compile Error]\n" + data['compile_err'] + "\n\n")
+    output_text.insert(tk.END, data['output'])
+
+def gui_main():
+    """
+    Launches the Tkinter GUI, letting the user paste code, specify a prompt,
+    run the generation loop, view outputs, and inspect past iterations.
+    """
+    root = tk.Tk()
+    root.title("C++ Generation & Fixer GUI")
+
+    # Window layout
+    top_frame = ttk.Frame(root, padding="5")
+    top_frame.pack(side=tk.TOP, fill=tk.X)
+
+    code_label = ttk.Label(top_frame, text="Paste your C++ code (optional):")
+    code_label.pack(side=tk.TOP, anchor=tk.W)
+
+    code_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, width=100, height=15)
+    code_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    prompt_label = ttk.Label(top_frame, text="Prompt:")
+    prompt_label.pack(side=tk.TOP, anchor=tk.W)
+
+    prompt_entry = ttk.Entry(top_frame, width=100)
+    prompt_entry.pack(side=tk.TOP, fill=tk.X, expand=True)
+
+    run_button = ttk.Button(top_frame, text="Run Generation",
+                            command=lambda: on_run_button_click(code_text, prompt_entry, output_text, history_list))
+    run_button.pack(side=tk.TOP, pady=5)
+
+    bottom_frame = ttk.Frame(root, padding="5")
+    bottom_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    # History panel
+    history_label = ttk.Label(bottom_frame, text="Past Generations / Fixes:")
+    history_label.pack(side=tk.LEFT, anchor=tk.N)
+
+    history_list = tk.Listbox(bottom_frame, width=30)
+    history_list.pack(side=tk.LEFT, fill=tk.Y)
+    history_list.bind('<<ListboxSelect>>', lambda evt: on_history_select(evt, code_text, output_text, history_list))
+
+    # Output panel
+    output_label = ttk.Label(bottom_frame, text="Output (Compile/Error/Run Logs):")
+    output_label.pack(side=tk.TOP, anchor=tk.W)
+
+    output_text = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, width=80, height=20)
+    output_text.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    # Start main loop
+    root.mainloop()
+
+# ------------------ Entry Point ------------------ #
 
 if __name__ == "__main__":
-    main()
+    # If user passes 'cli' argument, run the CLI version. Else, run the GUI.
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "cli":
+        cli_main()
+    else:
+        gui_main()
