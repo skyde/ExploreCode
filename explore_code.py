@@ -32,14 +32,6 @@ from gui_style import apply_dark_mode
 
 # ------------------ Original Configuration ------------------ #
 
-DEBUG_PROMPT = """
-- Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
-- Each node is connected to 1-8 other nodes
-- The algorithm should be very efficient, and create benchmarks to verify performance
-- Use a 'bit matrix' to accelerate the connectivity clustering, using 256 bit registers, and clever use of intrinsics and bit manipulation operations to accelerate (e.g. bitwise OR)
-- Use SIMD operations (AVX2)
-- Only use a single core
-"""
 USE_DEBUG_PROMPT = False
 INITAL_MODEL_NAME = "o1-preview"
 FIX_MODEL_NAME = "o1-mini"
@@ -48,32 +40,6 @@ MAX_ITERATIONS = 10
 GENERATED_ROOT_FOLDER = "generated"
 EXECUTABLE = "program"  # We'll compile the code to a program each iteration
 PRINT_SEND = True
-
-GENERATE_PROMPT_SYSTEM = r"""
-Write a single C++17 file which I'll call 'generated.cpp'. 
-Your solution must:
-- Include a main() function that unit tests the relevant functionality using <cassert>.
-- Tests should be EXTREMELY extensive and cover all edge cases.
-- Add verbose logging to the tests as they run so we can see what's happening from the output. You should output the values of things as they run so we can see what they are.
-- If any test fails, the program should exit with a non-zero return code.
-- Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
-- Do NOT put code in 
-cpp blocks.
-"""
-
-GENERATE_PROMPT_USER = r"""
-Please solve the following problem:
-"""
-
-FIX_PROMPT = r"""
-We encountered errors during compilation or runtime.
-Please fix the entire single-file code.
-Add additional verbose logging to the tests as the previous logging was insufficient. You should output the values of things as they run so we can see what they are.
-Be careful about using verbose logging in tight loops, to avoid excessive output.
-Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
-- Do NOT put code in
-cpp blocks.
-"""
 
 MAX_PROMPT_LENGTH = 50000
 
@@ -196,7 +162,7 @@ def fix_code_until_success_or_limit(
     everything_file: str,
     label_prefix: str,
     user_problem: str = "",
-    fix_prompt: str = FIX_PROMPT,
+    fix_prompt: str = helpers.FIX_PROMPT,
     max_iterations: int = MAX_ITERATIONS
 ):
     """
@@ -383,7 +349,7 @@ def cli_main():
             if compile_err:
                 truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                 fix_input = (
-                    f"{FIX_PROMPT}\n"
+                    f"{helpers.FIX_PROMPT}\n"
                     f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
                     f"Current Code:\n{initial_code}"
                 )
@@ -395,7 +361,7 @@ def cli_main():
             else:
                 truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                 fix_input = (
-                    f"{FIX_PROMPT}\n"
+                    f"{helpers.FIX_PROMPT}\n"
                     f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
                     f"Current Code:\n{initial_code}"
                 )
@@ -411,7 +377,7 @@ def cli_main():
     # If we don't have success from the initial code, let's attempt to generate from a user prompt
     if not initial_code_success:
         if USE_DEBUG_PROMPT:
-            user_problem = DEBUG_PROMPT
+            user_problem = helpers.DEBUG_PROMPT
         else:
             if resume_folder:
                 user_problem = input("Enter a short description of the problem you want solved (or press Enter to stop): ")
@@ -425,11 +391,11 @@ def cli_main():
         append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_problem}\n\n")
 
         combined_prompt_user = f"""
-{GENERATE_PROMPT_USER}
+{helpers.GENERATE_PROMPT_USER}
 \"\"\"{user_problem}\"\"\" 
 """
         ensure_prompt_length_ok(combined_prompt_user)
-        single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
+        single_file_code = call_openai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
         for iteration in range(1, MAX_ITERATIONS + 1):
             gen_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
@@ -442,7 +408,7 @@ def cli_main():
                 if compile_err:
                     truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                     fix_input = (
-                        f"{FIX_PROMPT}\n"
+                        f"{helpers.FIX_PROMPT}\n"
                         f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
                         f"Current Code:\n{single_file_code}"
                     )
@@ -451,7 +417,7 @@ def cli_main():
                 else:
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
-                        f"{FIX_PROMPT}\n"
+                        f"{helpers.FIX_PROMPT}\n"
                         f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
                         f"Current Code:\n{single_file_code}"
                     )
@@ -525,7 +491,7 @@ class GenerationWorker(QThread):
                     self.signals.log.emit("[GUI] Fixing compile error...\n")
                     truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                     fix_input = (
-                        f"{FIX_PROMPT}\n"
+                        f"{helpers.FIX_PROMPT}\n"
                         f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
                         f"Current Code:\n{self.code_input}"
                     )
@@ -552,7 +518,7 @@ class GenerationWorker(QThread):
                     self.signals.log.emit("[GUI] Fixing runtime error...\n")
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
-                        f"{FIX_PROMPT}\n"
+                        f"{helpers.FIX_PROMPT}\n"
                         f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
                         f"Current Code:\n{self.code_input}"
                     )
@@ -586,11 +552,11 @@ class GenerationWorker(QThread):
             append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{self.prompt_input}\n\n")
 
             combined_prompt_user = f"""
-{GENERATE_PROMPT_USER}
+{helpers.GENERATE_PROMPT_USER}
 \"\"\"{self.prompt_input}\"\"\" 
 """
             ensure_prompt_length_ok(combined_prompt_user)
-            single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
+            single_file_code = call_openai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
             for iteration in range(1, MAX_ITERATIONS + 1):
                 if generation_stopped:
@@ -623,7 +589,7 @@ class GenerationWorker(QThread):
                         self.signals.log.emit("[GUI] Attempting compile fix...\n")
                         truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                         fix_input = (
-                            f"{FIX_PROMPT}\n"
+                            f"{helpers.FIX_PROMPT}\n"
                             f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
                             f"Current Code:\n{single_file_code}"
                         )
@@ -633,7 +599,7 @@ class GenerationWorker(QThread):
                         self.signals.log.emit("[GUI] Attempting runtime fix...\n")
                         truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                         fix_input = (
-                            f"{FIX_PROMPT}\n"
+                            f"{helpers.FIX_PROMPT}\n"
                             f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
                             f"Current Code:\n{single_file_code}"
                         )
