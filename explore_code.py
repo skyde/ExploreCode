@@ -8,25 +8,23 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
 
-# ------------------ Additional PyQt Imports ------------------ #
+# PyQt Imports
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
-    QTextEdit,
+    QPlainTextEdit,
     QListWidget,
     QPushButton,
     QLabel,
     QSplitter,
     QVBoxLayout,
     QHBoxLayout,
-    QPlainTextEdit,
     QFrame,
-    QMessageBox,
-    QSizePolicy,
-    QLineEdit
+    QSizePolicy
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt5.QtGui import QPalette, QColor
 import queue
 
 # ------------------ Original Configuration ------------------ #
@@ -298,13 +296,7 @@ def compile_run_check_code(
 # ------------------ Original CLI Main ------------------ #
 
 def cli_main():
-    """
-    The original 'main()' function from the code.
-    Reads code from stdin, tries to compile & run it, or else
-    generates new code from a prompt. All logic remains unchanged.
-    """
     print("[main] Starting code generation & testing process.\n")
-
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
     os.makedirs(session_folder, exist_ok=True)
@@ -318,7 +310,6 @@ def cli_main():
     initial_code_success = False
     single_file_code = ""
 
-    # 2) If code from stdin
     if initial_code.strip():
         print("[main] We have initial code from stdin. We'll try compiling and running it.\n")
         init_code_filename = os.path.join(session_folder, "initial_code.cpp")
@@ -329,7 +320,7 @@ def cli_main():
         if success:
             initial_code_success = True
         else:
-            if compile_err:  # compile error
+            if compile_err:
                 truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                 fix_input = (
                     f"{FIX_PROMPT}\n"
@@ -341,7 +332,7 @@ def cli_main():
                 initial_code_success, single_file_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
                 )
-            else:  # runtime error
+            else:
                 truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                 fix_input = (
                     f"{FIX_PROMPT}\n"
@@ -357,7 +348,6 @@ def cli_main():
         if initial_code_success:
             print("[main] The code from stdin worked or was fixed.\n")
 
-    # 3) If not successful (or no code from stdin), generate new code
     if not initial_code_success:
         print("[main] Proceeding to generate new code.\n")
 
@@ -408,11 +398,10 @@ def cli_main():
     print("[main] Process finished.\n")
     print(f"[main] Code & logs in '{session_folder}'. Combined log in '{EVERYTHING_FILE}'.\n")
 
-# ------------------ PyQt GUI Implementation ------------------ #
+# ------------------ PyQt Dark Mode & GUI Implementation ------------------ #
 
 class WorkerSignals(QObject):
     log = pyqtSignal(str)
-    iteration_complete = pyqtSignal()
     finished = pyqtSignal()
 
 class GenerationWorker(QThread):
@@ -425,11 +414,8 @@ class GenerationWorker(QThread):
         super().__init__()
         self.code_input = code_input
         self.prompt_input = prompt_input
-
-        # We'll store iteration history here:
         self.iteration_history = []
         self.session_folder = None
-        self.stopped = False
 
     def run(self):
         global generation_stopped
@@ -446,7 +432,6 @@ class GenerationWorker(QThread):
         initial_code_success = False
         single_file_code = ""
 
-        # 1) Attempt with user-provided code_input
         if self.code_input.strip() and not generation_stopped:
             iteration_label = "Initial Code"
             init_code_filename = os.path.join(self.session_folder, "initial_code.cpp")
@@ -462,6 +447,7 @@ class GenerationWorker(QThread):
                 'compile_err': compile_err,
             }
             self.iteration_history.append(iteration_data)
+
             if compile_err:
                 self.signals.log.emit(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
             else:
@@ -497,9 +483,7 @@ class GenerationWorker(QThread):
                         if success_fix:
                             initial_code_success = True
                             single_file_code = fixed_code
-
                 else:
-                    # runtime error
                     self.signals.log.emit("[GUI] Fixing runtime error...\n")
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
@@ -527,7 +511,6 @@ class GenerationWorker(QThread):
                             initial_code_success = True
                             single_file_code = fixed_code
 
-        # 2) If still not success, prompt-based generation
         if not initial_code_success and not generation_stopped:
             if not self.prompt_input.strip():
                 self.signals.log.emit("[GUI] No code or prompt provided. Stopping.\n")
@@ -598,63 +581,63 @@ class GenerationWorker(QThread):
         self.signals.finished.emit()
 
 
-# ------------------ The PyQt Main Window ------------------ #
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, QLabel, QSplitter
+)
+from PyQt5.QtGui import QPalette, QColor
+from PyQt5.QtCore import Qt
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("C++ Generation & Fixer (PyQt)")
+        self.setWindowTitle("C++ Generation & Fixer (PyQt Dark Mode)")
         self.resize(1200, 800)
+
+        # Apply the Fusion style with a dark palette
+        self.apply_dark_mode()
 
         # Central widget
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-
-        # Master layout
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setSpacing(5)
 
-        # --- Prompt area + Buttons --- #
+        # Prompt area
         self.prompt_label = QLabel("Prompt (multi-line):")
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlaceholderText("Enter your prompt here...")
 
+        # Buttons
         self.run_button = QPushButton("Run Generation")
         self.stop_button = QPushButton("Stop Generation")
         self.stop_button.setEnabled(False)
 
-        # Button row
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.run_button)
-        button_layout.addWidget(self.stop_button)
-        button_container = QWidget()
-        button_container.setLayout(button_layout)
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.run_button)
+        btn_layout.addWidget(self.stop_button)
 
-        # Top layout
         top_layout = QVBoxLayout()
         top_layout.addWidget(self.prompt_label)
         top_layout.addWidget(self.prompt_edit)
-        top_layout.addWidget(button_container)
+        top_layout.addLayout(btn_layout)
 
-        # Put top_layout in a QWidget
         top_widget = QWidget()
         top_widget.setLayout(top_layout)
+
         main_layout.addWidget(top_widget)
 
-        # --- Split area for History vs. Output/Code --- #
+        # History vs. Output/Code
         splitter_main = QSplitter(Qt.Horizontal)
 
-        # Left side: History
+        # Left (History)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        self.history_label = QLabel("Past Generations / Fixes:")
+        self.history_label = QLabel("Past Generations:")
         self.history_list = QListWidget()
         left_layout.addWidget(self.history_label)
         left_layout.addWidget(self.history_list)
         splitter_main.addWidget(left_widget)
 
-        # Right side: Another splitter (vertical) for Output (top) and Code (bottom)
+        # Right -> Another splitter
         splitter_right = QSplitter(Qt.Vertical)
 
         # Output
@@ -665,6 +648,8 @@ class MainWindow(QMainWindow):
         self.output_text.setReadOnly(True)
         output_layout.addWidget(self.output_label)
         output_layout.addWidget(self.output_text)
+        output_widget.setLayout(output_layout)
+
         splitter_right.addWidget(output_widget)
 
         # Code
@@ -674,105 +659,112 @@ class MainWindow(QMainWindow):
         self.code_edit = QPlainTextEdit()
         code_layout.addWidget(self.code_label)
         code_layout.addWidget(self.code_edit)
+        code_widget.setLayout(code_layout)
+
         splitter_right.addWidget(code_widget)
 
         splitter_main.addWidget(splitter_right)
         splitter_main.setStretchFactor(1, 3)
+
         main_layout.addWidget(splitter_main, 1)
 
-        # Worker thread reference
+        # Worker thread
         self.worker_thread = None
-        self._iteration_history = []  # local memory if we want it
+        self._iteration_history = []
 
         # Connect signals
         self.run_button.clicked.connect(self.start_generation)
         self.stop_button.clicked.connect(self.stop_generation)
         self.history_list.currentRowChanged.connect(self.on_history_select)
 
+    def apply_dark_mode(self):
+        """Apply a dark palette to the entire application."""
+        from PyQt5.QtGui import QPalette, QColor
+        self.setStyleSheet("")  # Clear any custom styles
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        app.setStyle("Fusion")
+        dark_palette = QPalette()
+        dark_palette.setColor(QPalette.Window, QColor(45, 45, 45))
+        dark_palette.setColor(QPalette.WindowText, Qt.white)
+        dark_palette.setColor(QPalette.Base, QColor(30, 30, 30))
+        dark_palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
+        dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
+        dark_palette.setColor(QPalette.ToolTipText, Qt.white)
+        dark_palette.setColor(QPalette.Text, Qt.white)
+        dark_palette.setColor(QPalette.Button, QColor(45, 45, 45))
+        dark_palette.setColor(QPalette.ButtonText, Qt.white)
+        dark_palette.setColor(QPalette.BrightText, Qt.red)
+        dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+        app.setPalette(dark_palette)
+
     def start_generation(self):
-        """Start background thread for generation."""
         if self.worker_thread and self.worker_thread.isRunning():
             return  # Already running
 
         code_input = self.code_edit.toPlainText()
         prompt_input = self.prompt_edit.toPlainText()
 
-        # Create worker
+        # Clear old history
+        self.history_list.clear()
+        self._iteration_history.clear()
+        self.output_text.clear()
+
+        # Worker
         self.worker_thread = GenerationWorker(code_input, prompt_input)
         self.worker_thread.signals.log.connect(self.append_log)
         self.worker_thread.signals.finished.connect(self.generation_finished)
         self.worker_thread.started.connect(self.on_generation_started)
-
-        # When the worker finishes each iteration we can do something if we like
-        # Not used here but example: self.worker_thread.signals.iteration_complete.connect(...)
-
         self.worker_thread.start()
 
     def on_generation_started(self):
-        """When the QThread actually starts running."""
         self.run_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self.history_list.clear()
-        self.output_text.clear()
-        # We also reset local iteration history, if we want
-        # But the worker has its own iteration_history
 
     def stop_generation(self):
-        """Stop generation gracefully."""
         global generation_stopped
         generation_stopped = True
         self.append_log("[GUI] Stop signal received. Attempting to stop generation...\n")
 
     def generation_finished(self):
-        """Worker signals that it is done."""
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        # Grab iteration history from worker
-        # We can fill the history list here if we wanted, but we already did so in the worker
-        # Or we can do more final steps
         self.append_log("[GUI] Generation thread finished.\n")
-
         if self.worker_thread:
-            # Copy iteration history from worker
+            # Move iteration_history from worker to local
             self._iteration_history = self.worker_thread.iteration_history
             self.history_list.clear()
             for item in self._iteration_history:
                 self.history_list.addItem(item['label'])
 
     def append_log(self, message):
-        """Append log text to the output pane."""
         self.output_text.moveCursor(self.output_text.textCursor().End)
         self.output_text.insertPlainText(message)
         self.output_text.moveCursor(self.output_text.textCursor().End)
 
     def on_history_select(self, index):
-        """
-        Show iteration code & output in the boxes.
-        """
         if index < 0 or index >= len(self._iteration_history):
             return
         data = self._iteration_history[index]
         self.code_edit.setPlainText(data['code'])
-        self.output_text.setPlainText("")
+        self.output_text.clear()
         if data['compile_err']:
             self.output_text.insertPlainText("[Compile Error]\n" + data['compile_err'] + "\n\n")
         self.output_text.insertPlainText(data['output'])
 
 
-# ------------------ Entry Point ------------------ #
-
 def gui_main_qt():
     app = QApplication(sys.argv)
-
-    # Create main window
     window = MainWindow()
     window.show()
-
     sys.exit(app.exec_())
 
-
 if __name__ == "__main__":
-    # If user passes 'cli' argument, run the CLI version. Else the PyQt GUI.
+    # If user passes 'cli' argument, run the CLI version. Otherwise, run the PyQt (Dark Mode) GUI.
     if len(sys.argv) > 1 and sys.argv[1].lower() == "cli":
         cli_main()
     else:
