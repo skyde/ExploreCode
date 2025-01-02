@@ -25,13 +25,10 @@ from PyQt5.QtWidgets import (
     QAction,
     QFileDialog
 )
-from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QRegExp
-from PyQt5.QtGui import (
-    QPalette, QColor, QSyntaxHighlighter, QTextCharFormat, QFont
-)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 
 import syntax_highlighter
+from gui_style import apply_dark_mode
 
 # ------------------ Original Configuration ------------------ #
 
@@ -79,7 +76,6 @@ cpp blocks.
 """
 
 MAX_PROMPT_LENGTH = 50000
-DEBUG_FIX_CODE = helpers.DEBUG_VALID_CODE
 
 # ------------------ Setup OpenAI ------------------ #
 
@@ -657,7 +653,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         # Apply the Fusion style with a dark palette
-        self.apply_dark_mode()
+        apply_dark_mode(self)
 
         # Create the menu
         menubar = self.menuBar()
@@ -751,30 +747,6 @@ class MainWindow(QMainWindow):
         # Attach syntax highlighters
         self.cpp_highlighter = syntax_highlighter.CppSyntaxHighlighter(self.code_edit.document())
         self.output_highlighter = syntax_highlighter.OutputHighlighter(self.output_text.document())
-
-    def apply_dark_mode(self):
-        """Apply a dark palette to the entire application."""
-        self.setStyleSheet("")
-        app = QApplication.instance()
-        if app is None:
-            return
-
-        app.setStyle("Fusion")
-        dark_palette = QPalette()
-        dark_palette.setColor(QPalette.Window, QColor(45, 45, 45))
-        dark_palette.setColor(QPalette.WindowText, Qt.white)
-        dark_palette.setColor(QPalette.Base, QColor(30, 30, 30))
-        dark_palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
-        dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
-        dark_palette.setColor(QPalette.ToolTipText, Qt.white)
-        dark_palette.setColor(QPalette.Text, Qt.white)
-        dark_palette.setColor(QPalette.Button, QColor(45, 45, 45))
-        dark_palette.setColor(QPalette.ButtonText, Qt.white)
-        dark_palette.setColor(QPalette.BrightText, Qt.red)
-        dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        dark_palette.setColor(QPalette.HighlightedText, Qt.black)
-        app.setPalette(dark_palette)
 
     def on_load_from_disk(self):
         folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
