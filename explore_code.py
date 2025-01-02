@@ -174,8 +174,7 @@ def run_executable(executable):
 
 # ------------------ Fix / Compile / Run Helpers ------------------ #
 
-# We'll add a global variable to handle stopping mid-iteration.
-generation_stopped = False
+generation_stopped = False  # Global flag to allow stopping generation mid-way
 
 def fix_code_until_success_or_limit(
     initial_code: str,
@@ -193,11 +192,11 @@ def fix_code_until_success_or_limit(
     Returns (success, final_code).
     """
     global generation_stopped
-
     current_code = initial_code
+
     for fix_iteration in range(1, max_iterations + 1):
         if generation_stopped:
-            break  # Stop if the user clicked "Stop Generation"
+            break
 
         fix_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}.cpp")
         write_to_file(fix_file, current_code)
@@ -411,7 +410,7 @@ def cli_main():
 # ------------------ GUI Enhancements ------------------ #
 
 iteration_history = []
-log_queue = queue.Queue()  # We'll use this queue to safely pass log messages from worker thread
+log_queue = queue.Queue()
 worker_thread = None
 
 def stop_generation():
@@ -443,9 +442,9 @@ def process_log_queue(output_text_widget):
     # Schedule next check
     output_text_widget.after(100, lambda: process_log_queue(output_text_widget))
 
-def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_history, root):
+def run_generation_gui(code_input, user_prompt, output_text_widget, history_list, root):
     """
-    This function encapsulates the generation/fix loop using the user-provided code and prompt,
+    Encapsulates the generation/fix loop using the user-provided code and prompt,
     storing iteration info in `iteration_history`. Checks 'generation_stopped' to stop early.
     """
     global generation_stopped
@@ -463,7 +462,7 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
     initial_code_success = False
     single_file_code = ""
 
-    # 1) Attempt with user-provided code_input first (if any)
+    # 1) Attempt with user-provided code_input first
     if code_input.strip() and not generation_stopped:
         iteration_label = "Initial Code"
         code_filename = os.path.join(session_folder, "initial_code.cpp")
@@ -479,7 +478,7 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
             'compile_err': compile_err,
         }
         iteration_history.append(iteration_data)
-        listbox_history.insert(tk.END, iteration_label)
+        history_list.insert(tk.END, iteration_label)
 
         if compile_err:
             log_message(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
@@ -511,7 +510,7 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
                         'compile_err': "",
                     }
                     iteration_history.append(iteration_data)
-                    listbox_history.insert(tk.END, iteration_data['label'])
+                    history_list.insert(tk.END, iteration_data['label'])
                     log_message("[GUI] Compile fix pass done.\n")
 
                     if success_fix:
@@ -541,7 +540,7 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
                         'compile_err': "",
                     }
                     iteration_history.append(iteration_data)
-                    listbox_history.insert(tk.END, iteration_data['label'])
+                    history_list.insert(tk.END, iteration_data['label'])
                     log_message("[GUI] Runtime fix pass done.\n")
 
                     if success_fix:
@@ -586,7 +585,7 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
                 'compile_err': compile_err,
             }
             iteration_history.append(iteration_data)
-            listbox_history.insert(tk.END, iteration_label)
+            history_list.insert(tk.END, iteration_label)
 
             if compile_err:
                 log_message(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
@@ -616,7 +615,6 @@ def run_generation_gui(code_input, user_prompt, output_text_widget, listbox_hist
                     )
                     ensure_prompt_length_ok(fix_input)
                     single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
-
         else:
             log_message(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
 
@@ -633,7 +631,7 @@ def background_generation(code_text, prompt_text, output_text, history_list, run
     code_input = code_text.get("1.0", tk.END)
     user_prompt = prompt_text.get("1.0", tk.END)
 
-    # Clear any existing iteration history for a fresh run
+    # Clear iteration history for a fresh run
     iteration_history.clear()
     history_list.delete(0, tk.END)
 
@@ -646,7 +644,6 @@ def background_generation(code_text, prompt_text, output_text, history_list, run
 def on_run_button_click(code_text, prompt_text, output_text, history_list, run_btn, stop_btn, root):
     global worker_thread
     if worker_thread and worker_thread.is_alive():
-        # Already running, do nothing or show a message
         return
     worker_thread = threading.Thread(
         target=background_generation, 
@@ -675,15 +672,14 @@ def on_history_select(evt, code_text, output_text, history_list):
 
 def gui_main():
     """
-    Launches the Tkinter GUI, letting the user:
-    - Provide a multi-line prompt (top)
-    - View logs and iteration history (middle)
-    - Provide code (bottom)
-    - Click "Run Generation" or "Stop Generation"
-    - Watch real-time logs without the UI freezing
+    Launches the Tkinter GUI with a PanedWindow-based layout:
+      - Top: Prompt + Run/Stop Buttons
+      - Middle: PanedWindow 
+         * Left: History
+         * Right: Another PanedWindow with Output (top) & Code (bottom)
     """
     root = tk.Tk()
-    root.title("C++ Generation & Fixer GUI (Dark Mode, Responsive)")
+    root.title("C++ Generation & Fixer GUI (Dark Mode, PanedWindow)")
 
     # ------------------ Dark Theme Setup ------------------ #
     style = ttk.Style()
@@ -695,85 +691,85 @@ def gui_main():
     style.configure("TScrollbar", background="gray25")
 
     root.configure(bg="gray15")
+    root.geometry("1200x800")  # A decent initial size
 
-    # Use grid geometry, with weight so it resizes nicely
-    root.rowconfigure(0, weight=1)
-    root.rowconfigure(1, weight=4)
-    root.rowconfigure(2, weight=2)
-    root.columnconfigure(0, weight=1)
-
-    # --- Top Frame: Prompt + Buttons --- #
+    # Top Frame for prompt + run/stop
     top_frame = ttk.Frame(root, padding="5")
-    top_frame.grid(row=0, column=0, sticky="nsew")
+    top_frame.pack(side=tk.TOP, fill=tk.X)
 
     prompt_label = ttk.Label(top_frame, text="Prompt (multi-line):")
-    prompt_label.grid(row=0, column=0, sticky="w")
+    prompt_label.pack(side=tk.TOP, anchor=tk.W)
 
-    prompt_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, width=100, height=5)
-    prompt_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+    prompt_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, height=5)
+    prompt_text.pack(side=tk.TOP, fill=tk.X, expand=False)
     prompt_text.config(bg="gray20", fg="white", insertbackground="white")
 
     button_frame = ttk.Frame(top_frame)
-    button_frame.grid(row=2, column=0, sticky="ew")
+    button_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
 
     run_button = ttk.Button(button_frame, text="Run Generation")
-    run_button.grid(row=0, column=0, padx=5, pady=5)
+    run_button.pack(side=tk.LEFT, padx=5)
 
     stop_button = ttk.Button(button_frame, text="Stop Generation", command=stop_generation)
-    stop_button.grid(row=0, column=1, padx=5, pady=5)
+    stop_button.pack(side=tk.LEFT, padx=5)
     stop_button.config(state=tk.DISABLED)
 
-    # Make row 1 (the prompt text) expand
-    top_frame.rowconfigure(1, weight=1)
+    # Main Paned Window
+    main_pane = ttk.Panedwindow(root, orient=tk.HORIZONTAL)
+    main_pane.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    # --- Middle Frame: Output + History --- #
-    middle_frame = ttk.Frame(root, padding="5")
-    middle_frame.grid(row=1, column=0, sticky="nsew")
-    middle_frame.rowconfigure(0, weight=1)
-    middle_frame.columnconfigure(1, weight=1)
+    # Left Frame: History
+    left_frame = ttk.Frame(main_pane)
+    left_frame.columnconfigure(0, weight=1)
+    left_frame.rowconfigure(1, weight=1)
 
-    # History panel
-    history_frame = ttk.Frame(middle_frame)
-    history_frame.grid(row=0, column=0, sticky="ns")
+    history_label = ttk.Label(left_frame, text="Past Generations / Fixes:")
+    history_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
 
-    history_label = ttk.Label(history_frame, text="Past Generations / Fixes:")
-    history_label.pack(side=tk.TOP, anchor=tk.N)
-
-    history_list = tk.Listbox(history_frame, width=30, bg="gray20", fg="white", selectbackground="gray40")
-    history_list.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    history_list = tk.Listbox(left_frame, width=30, bg="gray20", fg="white", selectbackground="gray40")
+    history_list.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
     history_list.bind('<<ListboxSelect>>', lambda evt: on_history_select(evt, code_text, output_text, history_list))
 
-    # Output panel
-    output_frame = ttk.Frame(middle_frame)
-    output_frame.grid(row=0, column=1, sticky="nsew")
+    main_pane.add(left_frame, weight=1)
+
+    # Right Pane: Split vertically for Output (top) & Code (bottom)
+    right_pane = ttk.Panedwindow(main_pane, orient=tk.VERTICAL)
+    main_pane.add(right_pane, weight=4)
+
+    # Output Panel
+    output_frame = ttk.Frame(right_pane)
+    output_frame.columnconfigure(0, weight=1)
     output_frame.rowconfigure(1, weight=1)
 
     output_label = ttk.Label(output_frame, text="Output (Compile/Error/Run Logs):")
-    output_label.grid(row=0, column=0, sticky="w")
+    output_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
 
-    output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD, width=80, height=20)
+    output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD)
     output_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
     output_text.config(bg="gray20", fg="white", insertbackground="white")
 
-    # --- Bottom Frame: Code Entry --- #
-    bottom_frame = ttk.Frame(root, padding="5")
-    bottom_frame.grid(row=2, column=0, sticky="nsew")
-    bottom_frame.rowconfigure(0, weight=1)
-    bottom_frame.columnconfigure(0, weight=1)
+    right_pane.add(output_frame, weight=2)
 
-    code_label = ttk.Label(bottom_frame, text="Paste your C++ code (optional):")
-    code_label.grid(row=0, column=0, sticky="w")
+    # Code Panel
+    code_frame = ttk.Frame(right_pane)
+    code_frame.columnconfigure(0, weight=1)
+    code_frame.rowconfigure(1, weight=1)
 
-    code_text = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, width=100, height=8)
+    code_label = ttk.Label(code_frame, text="Paste your C++ code (optional):")
+    code_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+
+    code_text = scrolledtext.ScrolledText(code_frame, wrap=tk.WORD)
     code_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
     code_text.config(bg="gray20", fg="white", insertbackground="white")
+
+    right_pane.add(code_frame, weight=3)
 
     # Wire up the run button to the background thread
     run_button.config(
         command=lambda: on_run_button_click(code_text, prompt_text, output_text, history_list, run_button, stop_button, root)
     )
 
-    # Start processing the log queue
+    # Start processing the log queue for real-time updates
     process_log_queue(output_text)
 
     root.mainloop()
