@@ -4,6 +4,8 @@ import os
 import sys
 import subprocess
 import datetime
+import re
+
 from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
@@ -21,13 +23,62 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QFrame,
-    QSizePolicy
+    QSizePolicy,
+    QMenuBar,
+    QMenu,
+    QAction,
+    QFileDialog
 )
+from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QRegExp
 from PyQt5.QtGui import (
     QPalette, QColor, QSyntaxHighlighter, QTextCharFormat, QFont
 )
-import queue
+
+# ------------------ Original Configuration ------------------ #
+
+DEBUG_PROMPT = """
+- Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
+- Each node is connected to 1-8 other nodes
+- The algorithm should be very efficient, and create benchmarks to verify performance
+- Use a 'bit matrix' to accelerate the connectivity clustering, using 256 bit registers, and clever use of intrinsics and bit manipulation operations to accelerate (e.g. bitwise OR)
+- Use SIMD operations (AVX2)
+- Only use a single core
+"""
+USE_DEBUG_PROMPT = False
+INITAL_MODEL_NAME = "o1-preview"
+FIX_MODEL_NAME = "o1-mini"
+MAX_ITERATIONS = 10
+
+GENERATED_ROOT_FOLDER = "generated"
+EXECUTABLE = "program"  # We'll compile the code to a program each iteration
+PRINT_SEND = True
+
+GENERATE_PROMPT_SYSTEM = r"""
+Write a single C++17 file which I'll call 'generated.cpp'. 
+Your solution must:
+- Include a main() function that unit tests the relevant functionality using <cassert>.
+- Tests should be EXTREMELY extensive and cover all edge cases.
+- Add verbose logging to the tests as they run so we can see what's happening from the output. You should output the values of things as they run so we can see what they are.
+- If any test fails, the program should exit with a non-zero return code.
+- Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
+- Do NOT put code in 
+cpp blocks.
+"""
+
+GENERATE_PROMPT_USER = r"""
+Please solve the following problem:
+"""
+
+FIX_PROMPT = r"""
+We encountered errors during compilation or runtime.
+Please fix the entire single-file code.
+Add additional verbose logging to the tests as the previous logging was insufficient. You should output the values of things as they run so we can see what they are.
+Be careful about using verbose logging in tight loops, to avoid excessive output.
+Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
+- Do NOT put code in
+cpp blocks.
+"""
 
 # ------------------ Syntax Highlighting Classes ------------------ #
 
@@ -146,51 +197,6 @@ class OutputHighlighter(QSyntaxHighlighter):
             info_format.setForeground(QColor("#0FAF0F"))  # Green
             self.setFormat(0, len(text), info_format)
 
-# ------------------ Original Configuration ------------------ #
-
-DEBUG_PROMPT = """
-- Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
-- Each node is connected to 1-8 other nodes
-- The algorithm should be very efficient, and create benchmarks to verify performance
-- Use a 'bit matrix' to accelerate the connectivity clustering, using 256 bit registers, and clever use of intrinsics and bit manipulation operations to accelerate (e.g. bitwise OR)
-- Use SIMD operations (AVX2)
-- Only use a single core
-"""
-USE_DEBUG_PROMPT = False
-INITAL_MODEL_NAME = "o1-preview"
-FIX_MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 10
-
-GENERATED_ROOT_FOLDER = "generated"
-EXECUTABLE = "program"  # We'll compile the code to a program each iteration
-PRINT_SEND = True
-
-GENERATE_PROMPT_SYSTEM = r"""
-Write a single C++17 file which I'll call 'generated.cpp'. 
-Your solution must:
-- Include a main() function that unit tests the relevant functionality using <cassert>.
-- Tests should be EXTREMELY extensive and cover all edge cases.
-- Add verbose logging to the tests as they run so we can see what's happening from the output. You should output the values of things as they run so we can see what they are.
-- If any test fails, the program should exit with a non-zero return code.
-- Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
-- Do NOT put code in 
-cpp blocks.
-"""
-
-GENERATE_PROMPT_USER = r"""
-Please solve the following problem:
-"""
-
-FIX_PROMPT = r"""
-We encountered errors during compilation or runtime.
-Please fix the entire single-file code.
-Add additional verbose logging to the tests as the previous logging was insufficient. You should output the values of things as they run so we can see what they are.
-Be careful about using verbose logging in tight loops, to avoid excessive output.
-Reply with ONLY code. Your response will be directly fed into the Clang compiler, so anything else will result in a compilation error.
-Do NOT put code in
-cpp blocks.
-"""
-
 MAX_PROMPT_LENGTH = 50000
 DEBUG_FIX_CODE = helpers.DEBUG_VALID_CODE
 
@@ -272,8 +278,7 @@ def read_file(filename):
 
 def compile_cpp(source_file, output_file):
     """
-    Compiles the C++ file into an executable using clang++.
-    Returns (success, error_message).
+    Compiles the C++ file into an executable using clang++. Returns (success, error_message).
     """
     compiler = "clang++"
     print(f"[compile_cpp] Using compiler: {compiler}")
@@ -412,26 +417,85 @@ def compile_run_check_code(
         print("[main] Code run succeeded (exit code = 0). Tests passed!\n")
         return (True, "", test_output)
 
+# ------------------ Helper to load last generation from disk ------------------ #
+
+def load_last_generated_code(session_folder: str) -> str:
+    """
+    Scans the session folder for the highest versioned code file:
+    either 'generated_vN.cpp', 'initial_code_fix_vN.cpp', or similar.
+    Returns the content of the file with the highest N found.
+    If no code is found, returns an empty string.
+    """
+    if not os.path.isdir(session_folder):
+        print(f"[load_last_generated_code] Folder '{session_folder}' does not exist.")
+        return ""
+
+    highest_version = -1
+    best_file = None
+
+    # Regex for capturing something like _v(\d+).cpp
+    version_pattern = re.compile(r"_v(\d+)\.cpp$")
+
+    for filename in os.listdir(session_folder):
+        if not filename.endswith(".cpp"):
+            continue
+        match = version_pattern.search(filename)
+        if match:
+            version_num = int(match.group(1))
+            if version_num > highest_version:
+                highest_version = version_num
+                best_file = filename
+
+    if best_file:
+        full_path = os.path.join(session_folder, best_file)
+        print(f"[load_last_generated_code] Loading code from: {full_path}")
+        return read_file(full_path)
+
+    print("[load_last_generated_code] No previous generation code found.")
+    return ""
+
 # ------------------ Original CLI Main ------------------ #
 
 def cli_main():
     print("[main] Starting code generation & testing process.\n")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
-    os.makedirs(session_folder, exist_ok=True)
+
+    # Check if user wants to resume from a previous session
+    resume_folder = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--resume" and i + 1 < len(sys.argv):
+            resume_folder = sys.argv[i + 1]
+            break
+
+    if resume_folder:
+        print(f"[main] Resuming from previous session folder: {resume_folder}")
+        initial_code = load_last_generated_code(resume_folder)
+        if not initial_code.strip():
+            print("[main] No code found in the specified folder. Exiting...")
+            return
+        session_folder = resume_folder
+    else:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
+        os.makedirs(session_folder, exist_ok=True)
+        initial_code = ""
 
     EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
     PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
 
-    print("[main] Please enter your initial code if needed (Ctrl+Z/Win or Ctrl+D/*nix to finish):\n")
-    initial_code = sys.stdin.read()
+    if not resume_folder:
+        print("[main] Please enter your initial code if needed (Ctrl+Z/Win or Ctrl+D/*nix to finish):\n")
+        code_from_stdin = sys.stdin.read()
+        if code_from_stdin.strip():
+            initial_code = code_from_stdin
 
     initial_code_success = False
     single_file_code = ""
 
+    # If we have something in initial_code, let's attempt to compile & fix it before generation
     if initial_code.strip():
-        print("[main] We have initial code from stdin. We'll try compiling and running it.\n")
+        print("[main] We have code to try. We'll compile/run/fix it if needed.\n")
         init_code_filename = os.path.join(session_folder, "initial_code.cpp")
+
         success, compile_err, runtime_out = compile_run_check_code(
             initial_code, init_code_filename, session_folder, EVERYTHING_FILE, "Initial Code"
         )
@@ -465,15 +529,20 @@ def cli_main():
                 )
 
         if initial_code_success:
-            print("[main] The code from stdin worked or was fixed.\n")
+            print("[main] The code loaded or from stdin was valid or successfully fixed.\n")
 
+    # If we don't have success from the initial code, let's attempt to generate from a user prompt
     if not initial_code_success:
-        print("[main] Proceeding to generate new code.\n")
-
         if USE_DEBUG_PROMPT:
             user_problem = DEBUG_PROMPT
         else:
-            user_problem = input("Enter a short description of the problem you want solved: ")
+            if resume_folder:
+                user_problem = input("Enter a short description of the problem you want solved (or press Enter to stop): ")
+                if not user_problem.strip():
+                    print("[main] No new prompt provided; stopping.")
+                    return
+            else:
+                user_problem = input("Enter a short description of the problem you want solved: ")
 
         write_to_file(PROMPT_FILE, user_problem)
         append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_problem}\n\n")
@@ -542,7 +611,7 @@ class GenerationWorker(QThread):
 
         self.signals.log.emit("[GUI] Starting generation process...\n")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_qt_{timestamp}")
+        self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
         os.makedirs(self.session_folder, exist_ok=True)
 
         EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
@@ -700,20 +769,23 @@ class GenerationWorker(QThread):
         self.signals.finished.emit()
 
 
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, QLabel, QSplitter
-)
-from PyQt5.QtGui import QPalette
-from PyQt5.QtCore import Qt
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("C++ Generation & Fixer (PyQt Dark Mode)")
+        self.setWindowTitle("Code Rancher 🐎")
         self.resize(1200, 800)
 
         # Apply the Fusion style with a dark palette
         self.apply_dark_mode()
+
+        # Create the menu
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("File")
+
+        # Action: Load from Disk
+        load_action = QAction("Load from Disk", self)
+        load_action.triggered.connect(self.on_load_from_disk)
+        file_menu.addAction(load_action)
 
         # Central widget
         central_widget = QWidget(self)
@@ -721,7 +793,7 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
 
         # Prompt area
-        self.prompt_label = QLabel("Prompt (multi-line):")
+        self.prompt_label = QLabel("Prompt:")
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlaceholderText("Enter your prompt here...")
 
@@ -750,7 +822,7 @@ class MainWindow(QMainWindow):
         # Left (History)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        self.history_label = QLabel("Past Generations:")
+        self.history_label = QLabel("History:")
         self.history_list = QListWidget()
         left_layout.addWidget(self.history_label)
         left_layout.addWidget(self.history_list)
@@ -762,7 +834,7 @@ class MainWindow(QMainWindow):
         # Output
         output_widget = QWidget()
         output_layout = QVBoxLayout(output_widget)
-        self.output_label = QLabel("Output (Compile/Error/Run Logs):")
+        self.output_label = QLabel("Output:")
         self.output_text = QPlainTextEdit()
         self.output_text.setReadOnly(True)
         output_layout.addWidget(self.output_label)
@@ -774,7 +846,7 @@ class MainWindow(QMainWindow):
         # Code
         code_widget = QWidget()
         code_layout = QVBoxLayout(code_widget)
-        self.code_label = QLabel("Paste your C++ code (optional):")
+        self.code_label = QLabel("C++ Code:")
         self.code_edit = QPlainTextEdit()
         code_layout.addWidget(self.code_label)
         code_layout.addWidget(self.code_edit)
@@ -794,13 +866,14 @@ class MainWindow(QMainWindow):
         self.run_button.clicked.connect(self.start_generation)
         self.stop_button.clicked.connect(self.stop_generation)
         self.history_list.currentRowChanged.connect(self.on_history_select)
-
+        
         # Attach syntax highlighters
         self.cpp_highlighter = CppSyntaxHighlighter(self.code_edit.document())
         self.output_highlighter = OutputHighlighter(self.output_text.document())
 
     def apply_dark_mode(self):
         """Apply a dark palette to the entire application."""
+        self.setStyleSheet("")
         app = QApplication.instance()
         if app is None:
             return
@@ -821,6 +894,16 @@ class MainWindow(QMainWindow):
         dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
         dark_palette.setColor(QPalette.HighlightedText, Qt.black)
         app.setPalette(dark_palette)
+
+    def on_load_from_disk(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
+        if folder:
+            code = load_last_generated_code(folder)
+            if code:
+                self.code_edit.setPlainText(code)
+                self.append_log(f"[GUI] Loaded code from '{folder}'\n")
+            else:
+                self.append_log(f"[GUI] No code found in '{folder}'\n")
 
     def start_generation(self):
         if self.worker_thread and self.worker_thread.isRunning():
@@ -855,7 +938,6 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.append_log("[GUI] Generation thread finished.\n")
         if self.worker_thread:
-            # Move iteration_history from worker to local
             self._iteration_history = self.worker_thread.iteration_history
             self.history_list.clear()
             for item in self._iteration_history:
@@ -875,7 +957,6 @@ class MainWindow(QMainWindow):
         if data['compile_err']:
             self.output_text.insertPlainText("[Compile Error]\n" + data['compile_err'] + "\n\n")
         self.output_text.insertPlainText(data['output'])
-
 
 def gui_main_qt():
     app = QApplication(sys.argv)
