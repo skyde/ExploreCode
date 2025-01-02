@@ -7,34 +7,29 @@ import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import helpers
-import tkinter as tk
-from tkinter import ttk, scrolledtext
-import threading
+
+# ------------------ Additional PyQt Imports ------------------ #
+from PyQt5.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QTextEdit,
+    QListWidget,
+    QPushButton,
+    QLabel,
+    QSplitter,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPlainTextEdit,
+    QFrame,
+    QMessageBox,
+    QSizePolicy,
+    QLineEdit
+)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 import queue
 
-# ------------------ Attempt Dynamic DPI Scaling on Windows ------------------ #
-def get_windows_scaling():
-    """
-    On Windows 8.1 or later, returns (float) the scaling factor
-    (e.g. 1.0 for 100%, 1.25 for 125%, etc.) from the primary monitor.
-    Otherwise returns 1.0.
-    """
-    if not sys.platform.startswith("win"):
-        return 1.0
-    try:
-        import ctypes
-        # This call sets per-monitor DPI awareness (so GetScaleFactorForDevice() can work)
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        # This returns an integer (100, 125, 150, etc.)
-        scale_int = ctypes.windll.shcore.GetScaleFactorForDevice(0)  # 0 = primary monitor
-        return scale_int / 100.0
-    except Exception:
-        return 1.0
-
-# Attempt to read actual Windows scaling (defaults to 1.0 if not on Windows or fails).
-SCALING_VALUE = get_windows_scaling()
-
-# ------------------ Configuration ------------------ #
+# ------------------ Original Configuration ------------------ #
 
 DEBUG_PROMPT = """
 - Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
@@ -163,10 +158,9 @@ def compile_cpp(source_file, output_file):
     Compiles the C++ file into an executable using clang++.
     Returns (success, error_message).
     """
-    compiler = "clang++"  # Use clang++ instead of g++
+    compiler = "clang++"
     print(f"[compile_cpp] Using compiler: {compiler}")
     
-    # Compile the C++ file with C++17 standard and AVX2
     cmd = [compiler, "-std=c++17", "-mavx2", source_file, "-o", output_file]
     print(f"[compile_cpp] Command: {' '.join(cmd)}\n")
     
@@ -180,7 +174,6 @@ def compile_cpp(source_file, output_file):
 def run_executable(executable):
     """
     Runs the executable file and returns (success, combined_output).
-    Includes a timeout to avoid infinite loops.
     """
     print(f"[run_executable] Running ./{executable}...\n")
     cmd = [f"./{executable}"]
@@ -196,7 +189,7 @@ def run_executable(executable):
 
 # ------------------ Fix / Compile / Run Helpers ------------------ #
 
-generation_stopped = False  # Global flag for stopping generation
+generation_stopped = False
 
 def fix_code_until_success_or_limit(
     initial_code: str,
@@ -210,8 +203,6 @@ def fix_code_until_success_or_limit(
     """
     Attempt to compile and run initial_code. If it fails either compilation or runtime tests,
     request a fix from OpenAI. Repeat until success or the maximum number of iterations is reached.
-
-    Returns (success, final_code).
     """
     global generation_stopped
     current_code = initial_code
@@ -275,7 +266,6 @@ def compile_run_check_code(
 ):
     """
     Compiles and runs the provided code, returning (success, error_message, runtime_output).
-    The code is saved to code_filename and appended to everything_file.
     """
     write_to_file(code_filename, code)
     append_to_file(everything_file, f"===== {label_prefix} Code =====\n{code}")
@@ -305,17 +295,16 @@ def compile_run_check_code(
         print("[main] Code run succeeded (exit code = 0). Tests passed!\n")
         return (True, "", test_output)
 
-# ------------------ CLI Main (Original Process) ------------------ #
+# ------------------ Original CLI Main ------------------ #
 
 def cli_main():
     """
-    This is the original 'main()' function from the code.
-    It reads code from stdin, tries to compile & run it, or else
+    The original 'main()' function from the code.
+    Reads code from stdin, tries to compile & run it, or else
     generates new code from a prompt. All logic remains unchanged.
     """
     print("[main] Starting code generation & testing process.\n")
 
-    # Create a new subfolder in "generated/" with a timestamp
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
     os.makedirs(session_folder, exist_ok=True)
@@ -323,26 +312,24 @@ def cli_main():
     EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
     PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
 
-    # ------------------ Read code from stdin ------------------ #
-    print("[main] Please enter your initial code if needed (Ctrl+Z on Windows or Ctrl+D on Linux/Mac to finish):\n")
+    print("[main] Please enter your initial code if needed (Ctrl+Z/Win or Ctrl+D/*nix to finish):\n")
     initial_code = sys.stdin.read()
 
     initial_code_success = False
     single_file_code = ""
 
-    # 2) If we got any code from stdin, compile and run it
+    # 2) If code from stdin
     if initial_code.strip():
         print("[main] We have initial code from stdin. We'll try compiling and running it.\n")
-        initial_code_filename = os.path.join(session_folder, "initial_code.cpp")
+        init_code_filename = os.path.join(session_folder, "initial_code.cpp")
         success, compile_err, runtime_out = compile_run_check_code(
-            initial_code, initial_code_filename, session_folder, EVERYTHING_FILE, "Initial Code"
+            initial_code, init_code_filename, session_folder, EVERYTHING_FILE, "Initial Code"
         )
 
         if success:
             initial_code_success = True
         else:
-            # If it's a compile error
-            if compile_err:
+            if compile_err:  # compile error
                 truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                 fix_input = (
                     f"{FIX_PROMPT}\n"
@@ -354,8 +341,7 @@ def cli_main():
                 initial_code_success, single_file_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
                 )
-            else:
-                # It's a runtime error
+            else:  # runtime error
                 truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                 fix_input = (
                     f"{FIX_PROMPT}\n"
@@ -369,13 +355,12 @@ def cli_main():
                 )
 
         if initial_code_success:
-            print("[main] The code from stdin worked or was fixed to work. No further generation needed.\n")
+            print("[main] The code from stdin worked or was fixed.\n")
 
-    # 3) If the initial code did NOT succeed (or nothing was provided), generate new code from a user prompt
+    # 3) If not successful (or no code from stdin), generate new code
     if not initial_code_success:
         print("[main] Proceeding to generate new code.\n")
 
-        # If in debug mode, use DEBUG_PROMPT
         if USE_DEBUG_PROMPT:
             user_problem = DEBUG_PROMPT
         else:
@@ -384,7 +369,6 @@ def cli_main():
         write_to_file(PROMPT_FILE, user_problem)
         append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_problem}\n\n")
 
-        # Generate brand new single-file code
         combined_prompt_user = f"""
 {GENERATE_PROMPT_USER}
 \"\"\"{user_problem}\"\"\" 
@@ -392,17 +376,14 @@ def cli_main():
         ensure_prompt_length_ok(combined_prompt_user)
         single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
-        # Attempt compile & run, else fix in a loop
         for iteration in range(1, MAX_ITERATIONS + 1):
-            generated_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
+            gen_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
             success, compile_err, runtime_out = compile_run_check_code(
-                single_file_code, generated_code_filename, session_folder, EVERYTHING_FILE, f"Iteration {iteration}"
+                single_file_code, gen_code_filename, session_folder, EVERYTHING_FILE, f"Iteration {iteration}"
             )
-
             if success:
-                break  # success
+                break
             else:
-                # If it's a compile error
                 if compile_err:
                     truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                     fix_input = (
@@ -413,7 +394,6 @@ def cli_main():
                     ensure_prompt_length_ok(fix_input)
                     single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
                 else:
-                    # It's a runtime error
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
                         f"{FIX_PROMPT}\n"
@@ -423,386 +403,377 @@ def cli_main():
                     ensure_prompt_length_ok(fix_input)
                     single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
         else:
-            print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without passing tests.\n")
+            print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without success.\n")
 
     print("[main] Process finished.\n")
-    print(f"[main] All generated code and outputs have been saved in the '{session_folder}' folder.")
-    print(f"[main] A combined log of everything can be found in '{EVERYTHING_FILE}'.\n")
+    print(f"[main] Code & logs in '{session_folder}'. Combined log in '{EVERYTHING_FILE}'.\n")
 
-# ------------------ GUI Enhancements ------------------ #
+# ------------------ PyQt GUI Implementation ------------------ #
 
-iteration_history = []
-log_queue = queue.Queue()
-worker_thread = None
+class WorkerSignals(QObject):
+    log = pyqtSignal(str)
+    iteration_complete = pyqtSignal()
+    finished = pyqtSignal()
 
-def stop_generation():
+class GenerationWorker(QThread):
     """
-    Sets the global flag so that the generation loop can stop gracefully.
+    Runs the generation/fix loop in the background, so the GUI doesn't freeze.
     """
-    global generation_stopped
-    generation_stopped = True
-    log_queue.put("[GUI] Stop signal received. Attempting to stop generation...\n")
+    signals = WorkerSignals()
 
-def log_message(msg: str):
-    """
-    Thread-safe way to add text to the queue, which the main thread will display.
-    """
-    log_queue.put(msg)
+    def __init__(self, code_input, prompt_input):
+        super().__init__()
+        self.code_input = code_input
+        self.prompt_input = prompt_input
 
-def process_log_queue(output_text_widget):
-    """
-    Periodically called in the main thread to consume messages from the log_queue
-    and display them in the output widget.
-    """
-    try:
-        while True:
-            msg = log_queue.get_nowait()
-            output_text_widget.insert(tk.END, msg)
-            output_text_widget.see(tk.END)
-    except queue.Empty:
-        pass
-    # Schedule next check
-    output_text_widget.after(100, lambda: process_log_queue(output_text_widget))
+        # We'll store iteration history here:
+        self.iteration_history = []
+        self.session_folder = None
+        self.stopped = False
 
-def run_generation_gui(code_input, user_prompt, output_text_widget, history_list, root):
-    """
-    Encapsulates the generation/fix loop using the user-provided code and prompt,
-    storing iteration info in `iteration_history`. Checks 'generation_stopped' to stop early.
-    """
-    global generation_stopped
-    generation_stopped = False
+    def run(self):
+        global generation_stopped
+        generation_stopped = False
 
-    log_message("[GUI] Starting generation process...\n")
+        self.signals.log.emit("[GUI] Starting generation process...\n")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_qt_{timestamp}")
+        os.makedirs(self.session_folder, exist_ok=True)
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_gui_{timestamp}")
-    os.makedirs(session_folder, exist_ok=True)
+        EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
+        PROMPT_FILE = os.path.join(self.session_folder, "prompt.txt")
 
-    EVERYTHING_FILE = os.path.join(session_folder, "everything.cpp")
-    PROMPT_FILE = os.path.join(session_folder, "prompt.txt")
+        initial_code_success = False
+        single_file_code = ""
 
-    initial_code_success = False
-    single_file_code = ""
-
-    # 1) Attempt with user-provided code_input first
-    if code_input.strip() and not generation_stopped:
-        iteration_label = "Initial Code"
-        code_filename = os.path.join(session_folder, "initial_code.cpp")
-
-        success, compile_err, runtime_out = compile_run_check_code(
-            code_input, code_filename, session_folder, EVERYTHING_FILE, iteration_label
-        )
-
-        iteration_data = {
-            'label': iteration_label,
-            'code': code_input,
-            'output': runtime_out if not compile_err else compile_err,
-            'compile_err': compile_err,
-        }
-        iteration_history.append(iteration_data)
-        history_list.insert(tk.END, iteration_label)
-
-        if compile_err:
-            log_message(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
-        else:
-            log_message(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
-
-        if success:
-            initial_code_success = True
-        else:
-            if compile_err:
-                log_message("[GUI] Fixing compile error...\n")
-                truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
-                fix_input = (
-                    f"{FIX_PROMPT}\n"
-                    f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
-                    f"Current Code:\n{code_input}"
-                )
-                ensure_prompt_length_ok(fix_input)
-                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
-
-                if not generation_stopped:
-                    success_fix, fixed_code = fix_code_until_success_or_limit(
-                        single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
-                    )
-                    iteration_data = {
-                        'label': "Fixed Initial Code",
-                        'code': fixed_code,
-                        'output': "Fix pass completed",
-                        'compile_err': "",
-                    }
-                    iteration_history.append(iteration_data)
-                    history_list.insert(tk.END, iteration_data['label'])
-                    log_message("[GUI] Compile fix pass done.\n")
-
-                    if success_fix:
-                        initial_code_success = True
-                        single_file_code = fixed_code
-
-            else:
-                # It's a runtime error
-                log_message("[GUI] Fixing runtime error...\n")
-                truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
-                fix_input = (
-                    f"{FIX_PROMPT}\n"
-                    f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
-                    f"Current Code:\n{code_input}"
-                )
-                ensure_prompt_length_ok(fix_input)
-                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
-
-                if not generation_stopped:
-                    success_fix, fixed_code = fix_code_until_success_or_limit(
-                        single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
-                    )
-                    iteration_data = {
-                        'label': "Fixed Initial Code (Runtime)",
-                        'code': fixed_code,
-                        'output': "Fix pass completed",
-                        'compile_err': "",
-                    }
-                    iteration_history.append(iteration_data)
-                    history_list.insert(tk.END, iteration_data['label'])
-                    log_message("[GUI] Runtime fix pass done.\n")
-
-                    if success_fix:
-                        initial_code_success = True
-                        single_file_code = fixed_code
-
-    # 2) If code not provided or still not success, attempt generation from user_prompt
-    if not initial_code_success and not generation_stopped:
-        if not user_prompt.strip():
-            log_message("[GUI] No code or prompt provided. Stopping.\n")
-            return
-
-        write_to_file(PROMPT_FILE, user_prompt)
-        append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{user_prompt}\n\n")
-
-        combined_prompt_user = f"""
-{GENERATE_PROMPT_USER}
-\"\"\"{user_prompt}\"\"\" 
-"""
-        ensure_prompt_length_ok(combined_prompt_user)
-        single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
-
-        for iteration in range(1, MAX_ITERATIONS + 1):
-            if generation_stopped:
-                break
-
-            iteration_label = f"Generated Iteration {iteration}"
-            generated_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
+        # 1) Attempt with user-provided code_input
+        if self.code_input.strip() and not generation_stopped:
+            iteration_label = "Initial Code"
+            init_code_filename = os.path.join(self.session_folder, "initial_code.cpp")
 
             success, compile_err, runtime_out = compile_run_check_code(
-                single_file_code,
-                generated_code_filename,
-                session_folder,
-                EVERYTHING_FILE,
-                iteration_label
+                self.code_input, init_code_filename, self.session_folder, EVERYTHING_FILE, iteration_label
             )
 
             iteration_data = {
                 'label': iteration_label,
-                'code': single_file_code,
+                'code': self.code_input,
                 'output': runtime_out if not compile_err else compile_err,
                 'compile_err': compile_err,
             }
-            iteration_history.append(iteration_data)
-            history_list.insert(tk.END, iteration_label)
-
+            self.iteration_history.append(iteration_data)
             if compile_err:
-                log_message(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
+                self.signals.log.emit(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
             else:
-                log_message(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
+                self.signals.log.emit(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
 
             if success:
-                break
+                initial_code_success = True
             else:
                 if compile_err:
-                    log_message("[GUI] Attempting compile fix...\n")
+                    self.signals.log.emit("[GUI] Fixing compile error...\n")
                     truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
                     fix_input = (
                         f"{FIX_PROMPT}\n"
                         f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
-                        f"Current Code:\n{single_file_code}"
+                        f"Current Code:\n{self.code_input}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
+                    single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+
+                    if not generation_stopped:
+                        success_fix, fixed_code = fix_code_until_success_or_limit(
+                            single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
+                        )
+                        iteration_data = {
+                            'label': "Fixed Initial Code",
+                            'code': fixed_code,
+                            'output': "Fix pass completed",
+                            'compile_err': "",
+                        }
+                        self.iteration_history.append(iteration_data)
+                        self.signals.log.emit("[GUI] Compile fix pass done.\n")
+
+                        if success_fix:
+                            initial_code_success = True
+                            single_file_code = fixed_code
+
                 else:
-                    log_message("[GUI] Attempting runtime fix...\n")
+                    # runtime error
+                    self.signals.log.emit("[GUI] Fixing runtime error...\n")
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
                         f"{FIX_PROMPT}\n"
                         f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
-                        f"Current Code:\n{single_file_code}"
+                        f"Current Code:\n{self.code_input}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai(user_prompt, fix_input, FIX_MODEL_NAME)
-        else:
-            log_message(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
+                    single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
 
-    log_message("[GUI] Process finished. Check 'History' for details.\n")
+                    if not generation_stopped:
+                        success_fix, fixed_code = fix_code_until_success_or_limit(
+                            single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
+                        )
+                        iteration_data = {
+                            'label': "Fixed Initial Code (Runtime)",
+                            'code': fixed_code,
+                            'output': "Fix pass completed",
+                            'compile_err': "",
+                        }
+                        self.iteration_history.append(iteration_data)
+                        self.signals.log.emit("[GUI] Runtime fix pass done.\n")
 
-def background_generation(code_text, prompt_text, output_text, history_list, run_btn, stop_btn, root):
-    """
-    Runs the generation in a background thread, so the GUI remains responsive.
-    """
-    # Disable run button while generating
-    run_btn.config(state=tk.DISABLED)
-    stop_btn.config(state=tk.NORMAL)
+                        if success_fix:
+                            initial_code_success = True
+                            single_file_code = fixed_code
 
-    code_input = code_text.get("1.0", tk.END)
-    user_prompt = prompt_text.get("1.0", tk.END)
+        # 2) If still not success, prompt-based generation
+        if not initial_code_success and not generation_stopped:
+            if not self.prompt_input.strip():
+                self.signals.log.emit("[GUI] No code or prompt provided. Stopping.\n")
+                self.signals.finished.emit()
+                return
 
-    # Clear iteration history for a fresh run
-    iteration_history.clear()
-    history_list.delete(0, tk.END)
+            write_to_file(PROMPT_FILE, self.prompt_input)
+            append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{self.prompt_input}\n\n")
 
-    run_generation_gui(code_input, user_prompt, output_text, history_list, root)
+            combined_prompt_user = f"""
+{GENERATE_PROMPT_USER}
+\"\"\"{self.prompt_input}\"\"\" 
+"""
+            ensure_prompt_length_ok(combined_prompt_user)
+            single_file_code = call_openai(GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
-    # Re-enable run button after completion
-    run_btn.config(state=tk.NORMAL)
-    stop_btn.config(state=tk.DISABLED)
+            for iteration in range(1, MAX_ITERATIONS + 1):
+                if generation_stopped:
+                    break
 
-def on_run_button_click(code_text, prompt_text, output_text, history_list, run_btn, stop_btn, root):
-    global worker_thread
-    if worker_thread and worker_thread.is_alive():
-        return
-    worker_thread = threading.Thread(
-        target=background_generation, 
-        args=(code_text, prompt_text, output_text, history_list, run_btn, stop_btn, root),
-        daemon=True
-    )
-    worker_thread.start()
+                iteration_label = f"Generated Iteration {iteration}"
+                gen_code_filename = os.path.join(self.session_folder, f"generated_v{iteration}.cpp")
 
-def on_history_select(evt, code_text, output_text, history_list):
-    """
-    When the user selects an item in the history listbox, show the code & output for that iteration.
-    """
-    w = evt.widget
-    if not w.curselection():
-        return
-    index = int(w.curselection()[0])
-    data = iteration_history[index]
+                success, compile_err, runtime_out = compile_run_check_code(
+                    single_file_code, gen_code_filename, self.session_folder, EVERYTHING_FILE, iteration_label
+                )
 
-    code_text.delete("1.0", tk.END)
-    code_text.insert(tk.END, data['code'])
+                iteration_data = {
+                    'label': iteration_label,
+                    'code': single_file_code,
+                    'output': runtime_out if not compile_err else compile_err,
+                    'compile_err': compile_err,
+                }
+                self.iteration_history.append(iteration_data)
 
-    output_text.delete("1.0", tk.END)
-    if data['compile_err']:
-        output_text.insert(tk.END, "[Compile Error]\n" + data['compile_err'] + "\n\n")
-    output_text.insert(tk.END, data['output'])
+                if compile_err:
+                    self.signals.log.emit(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
+                else:
+                    self.signals.log.emit(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
 
-def gui_main():
-    """
-    Launches the Tkinter GUI, reading Windows DPI scaling dynamically for the primary monitor.
-    """
-    root = tk.Tk()
-    root.title("C++ Generation & Fixer GUI (Dynamic DPI Scaling)")
+                if success:
+                    break
+                else:
+                    if compile_err:
+                        self.signals.log.emit("[GUI] Attempting compile fix...\n")
+                        truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
+                        fix_input = (
+                            f"{FIX_PROMPT}\n"
+                            f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
+                            f"Current Code:\n{single_file_code}"
+                        )
+                        ensure_prompt_length_ok(fix_input)
+                        single_file_code = call_openai(self.prompt_input, fix_input, FIX_MODEL_NAME)
+                    else:
+                        self.signals.log.emit("[GUI] Attempting runtime fix...\n")
+                        truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
+                        fix_input = (
+                            f"{FIX_PROMPT}\n"
+                            f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
+                            f"Current Code:\n{single_file_code}"
+                        )
+                        ensure_prompt_length_ok(fix_input)
+                        single_file_code = call_openai(self.prompt_input, fix_input, FIX_MODEL_NAME)
+            else:
+                self.signals.log.emit(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
 
-    # Attempt to apply dynamic scaling from Windows
-    try:
-        root.tk.call("tk", "scaling", SCALING_VALUE)
-    except Exception:
-        pass
+        self.signals.log.emit("[GUI] Process finished. Check 'History' for details.\n")
+        self.signals.finished.emit()
 
-    # Dark Theme & Font Setup
-    style = ttk.Style()
-    style.theme_use('clam')
-    style.configure(".", background="gray15", foreground="white", font=("Arial", 12))
-    style.configure("TFrame", background="gray15", foreground="white", font=("Arial", 12))
-    style.configure("TLabel", background="gray15", foreground="white", font=("Arial", 12))
-    style.configure("TButton", background="gray25", foreground="white", font=("Arial", 12))
-    style.configure("TScrollbar", background="gray25")
 
-    root.configure(bg="gray15")
-    root.geometry("1200x800")  # A decent initial size
+# ------------------ The PyQt Main Window ------------------ #
 
-    # Top Frame for prompt + run/stop
-    top_frame = ttk.Frame(root, padding="5")
-    top_frame.pack(side=tk.TOP, fill=tk.X)
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("C++ Generation & Fixer (PyQt)")
+        self.resize(1200, 800)
 
-    prompt_label = ttk.Label(top_frame, text="Prompt (multi-line):")
-    prompt_label.pack(side=tk.TOP, anchor=tk.W)
+        # Central widget
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
 
-    prompt_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, height=5)
-    prompt_text.pack(side=tk.TOP, fill=tk.X, expand=False)
-    prompt_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
+        # Master layout
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(5)
 
-    button_frame = ttk.Frame(top_frame)
-    button_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
+        # --- Prompt area + Buttons --- #
+        self.prompt_label = QLabel("Prompt (multi-line):")
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setPlaceholderText("Enter your prompt here...")
 
-    run_button = ttk.Button(button_frame, text="Run Generation")
-    run_button.pack(side=tk.LEFT, padx=5)
+        self.run_button = QPushButton("Run Generation")
+        self.stop_button = QPushButton("Stop Generation")
+        self.stop_button.setEnabled(False)
 
-    stop_button = ttk.Button(button_frame, text="Stop Generation", command=stop_generation)
-    stop_button.pack(side=tk.LEFT, padx=5)
-    stop_button.config(state=tk.DISABLED)
+        # Button row
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.run_button)
+        button_layout.addWidget(self.stop_button)
+        button_container = QWidget()
+        button_container.setLayout(button_layout)
 
-    # Main Paned Window
-    main_pane = ttk.Panedwindow(root, orient=tk.HORIZONTAL)
-    main_pane.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # Top layout
+        top_layout = QVBoxLayout()
+        top_layout.addWidget(self.prompt_label)
+        top_layout.addWidget(self.prompt_edit)
+        top_layout.addWidget(button_container)
 
-    # Left Frame: History
-    left_frame = ttk.Frame(main_pane)
-    left_frame.columnconfigure(0, weight=1)
-    left_frame.rowconfigure(1, weight=1)
+        # Put top_layout in a QWidget
+        top_widget = QWidget()
+        top_widget.setLayout(top_layout)
+        main_layout.addWidget(top_widget)
 
-    history_label = ttk.Label(left_frame, text="Past Generations / Fixes:")
-    history_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+        # --- Split area for History vs. Output/Code --- #
+        splitter_main = QSplitter(Qt.Horizontal)
 
-    history_list = tk.Listbox(left_frame, width=30, bg="gray20", fg="white", selectbackground="gray40", font=("Arial", 12))
-    history_list.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-    history_list.bind('<<ListboxSelect>>', lambda evt: on_history_select(evt, code_text, output_text, history_list))
+        # Left side: History
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        self.history_label = QLabel("Past Generations / Fixes:")
+        self.history_list = QListWidget()
+        left_layout.addWidget(self.history_label)
+        left_layout.addWidget(self.history_list)
+        splitter_main.addWidget(left_widget)
 
-    main_pane.add(left_frame, weight=1)
+        # Right side: Another splitter (vertical) for Output (top) and Code (bottom)
+        splitter_right = QSplitter(Qt.Vertical)
 
-    # Right Pane: split vertically for Output (top) & Code (bottom)
-    right_pane = ttk.Panedwindow(main_pane, orient=tk.VERTICAL)
-    main_pane.add(right_pane, weight=4)
+        # Output
+        output_widget = QWidget()
+        output_layout = QVBoxLayout(output_widget)
+        self.output_label = QLabel("Output (Compile/Error/Run Logs):")
+        self.output_text = QPlainTextEdit()
+        self.output_text.setReadOnly(True)
+        output_layout.addWidget(self.output_label)
+        output_layout.addWidget(self.output_text)
+        splitter_right.addWidget(output_widget)
 
-    # Output Panel
-    output_frame = ttk.Frame(right_pane)
-    output_frame.columnconfigure(0, weight=1)
-    output_frame.rowconfigure(1, weight=1)
+        # Code
+        code_widget = QWidget()
+        code_layout = QVBoxLayout(code_widget)
+        self.code_label = QLabel("Paste your C++ code (optional):")
+        self.code_edit = QPlainTextEdit()
+        code_layout.addWidget(self.code_label)
+        code_layout.addWidget(self.code_edit)
+        splitter_right.addWidget(code_widget)
 
-    output_label = ttk.Label(output_frame, text="Output (Compile/Error/Run Logs):")
-    output_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+        splitter_main.addWidget(splitter_right)
+        splitter_main.setStretchFactor(1, 3)
+        main_layout.addWidget(splitter_main, 1)
 
-    output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD)
-    output_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-    output_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
+        # Worker thread reference
+        self.worker_thread = None
+        self._iteration_history = []  # local memory if we want it
 
-    right_pane.add(output_frame, weight=2)
+        # Connect signals
+        self.run_button.clicked.connect(self.start_generation)
+        self.stop_button.clicked.connect(self.stop_generation)
+        self.history_list.currentRowChanged.connect(self.on_history_select)
 
-    # Code Panel
-    code_frame = ttk.Frame(right_pane)
-    code_frame.columnconfigure(0, weight=1)
-    code_frame.rowconfigure(1, weight=1)
+    def start_generation(self):
+        """Start background thread for generation."""
+        if self.worker_thread and self.worker_thread.isRunning():
+            return  # Already running
 
-    code_label = ttk.Label(code_frame, text="Paste your C++ code (optional):")
-    code_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+        code_input = self.code_edit.toPlainText()
+        prompt_input = self.prompt_edit.toPlainText()
 
-    code_text = scrolledtext.ScrolledText(code_frame, wrap=tk.WORD)
-    code_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-    code_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
+        # Create worker
+        self.worker_thread = GenerationWorker(code_input, prompt_input)
+        self.worker_thread.signals.log.connect(self.append_log)
+        self.worker_thread.signals.finished.connect(self.generation_finished)
+        self.worker_thread.started.connect(self.on_generation_started)
 
-    right_pane.add(code_frame, weight=3)
+        # When the worker finishes each iteration we can do something if we like
+        # Not used here but example: self.worker_thread.signals.iteration_complete.connect(...)
 
-    # Wire up the run button
-    run_button.config(
-        command=lambda: on_run_button_click(code_text, prompt_text, output_text, history_list, run_button, stop_button, root)
-    )
+        self.worker_thread.start()
 
-    # Start processing the log queue for real-time updates
-    process_log_queue(output_text)
+    def on_generation_started(self):
+        """When the QThread actually starts running."""
+        self.run_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.history_list.clear()
+        self.output_text.clear()
+        # We also reset local iteration history, if we want
+        # But the worker has its own iteration_history
 
-    root.mainloop()
+    def stop_generation(self):
+        """Stop generation gracefully."""
+        global generation_stopped
+        generation_stopped = True
+        self.append_log("[GUI] Stop signal received. Attempting to stop generation...\n")
+
+    def generation_finished(self):
+        """Worker signals that it is done."""
+        self.run_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        # Grab iteration history from worker
+        # We can fill the history list here if we wanted, but we already did so in the worker
+        # Or we can do more final steps
+        self.append_log("[GUI] Generation thread finished.\n")
+
+        if self.worker_thread:
+            # Copy iteration history from worker
+            self._iteration_history = self.worker_thread.iteration_history
+            self.history_list.clear()
+            for item in self._iteration_history:
+                self.history_list.addItem(item['label'])
+
+    def append_log(self, message):
+        """Append log text to the output pane."""
+        self.output_text.moveCursor(self.output_text.textCursor().End)
+        self.output_text.insertPlainText(message)
+        self.output_text.moveCursor(self.output_text.textCursor().End)
+
+    def on_history_select(self, index):
+        """
+        Show iteration code & output in the boxes.
+        """
+        if index < 0 or index >= len(self._iteration_history):
+            return
+        data = self._iteration_history[index]
+        self.code_edit.setPlainText(data['code'])
+        self.output_text.setPlainText("")
+        if data['compile_err']:
+            self.output_text.insertPlainText("[Compile Error]\n" + data['compile_err'] + "\n\n")
+        self.output_text.insertPlainText(data['output'])
+
 
 # ------------------ Entry Point ------------------ #
 
+def gui_main_qt():
+    app = QApplication(sys.argv)
+
+    # Create main window
+    window = MainWindow()
+    window.show()
+
+    sys.exit(app.exec_())
+
+
 if __name__ == "__main__":
-    # If user passes 'cli' argument, run the CLI version. Otherwise, run the GUI.
+    # If user passes 'cli' argument, run the CLI version. Else the PyQt GUI.
     if len(sys.argv) > 1 and sys.argv[1].lower() == "cli":
         cli_main()
     else:
-        gui_main()
+        gui_main_qt()
