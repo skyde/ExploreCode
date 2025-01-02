@@ -12,6 +12,28 @@ from tkinter import ttk, scrolledtext
 import threading
 import queue
 
+# ------------------ Attempt Dynamic DPI Scaling on Windows ------------------ #
+def get_windows_scaling():
+    """
+    On Windows 8.1 or later, returns (float) the scaling factor
+    (e.g. 1.0 for 100%, 1.25 for 125%, etc.) from the primary monitor.
+    Otherwise returns 1.0.
+    """
+    if not sys.platform.startswith("win"):
+        return 1.0
+    try:
+        import ctypes
+        # This call sets per-monitor DPI awareness (so GetScaleFactorForDevice() can work)
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        # This returns an integer (100, 125, 150, etc.)
+        scale_int = ctypes.windll.shcore.GetScaleFactorForDevice(0)  # 0 = primary monitor
+        return scale_int / 100.0
+    except Exception:
+        return 1.0
+
+# Attempt to read actual Windows scaling (defaults to 1.0 if not on Windows or fails).
+SCALING_VALUE = get_windows_scaling()
+
 # ------------------ Configuration ------------------ #
 
 DEBUG_PROMPT = """
@@ -174,7 +196,7 @@ def run_executable(executable):
 
 # ------------------ Fix / Compile / Run Helpers ------------------ #
 
-generation_stopped = False  # Global flag to allow stopping generation mid-way
+generation_stopped = False  # Global flag for stopping generation
 
 def fix_code_until_success_or_limit(
     initial_code: str,
@@ -672,22 +694,24 @@ def on_history_select(evt, code_text, output_text, history_list):
 
 def gui_main():
     """
-    Launches the Tkinter GUI with a PanedWindow-based layout:
-      - Top: Prompt + Run/Stop Buttons
-      - Middle: PanedWindow 
-         * Left: History
-         * Right: Another PanedWindow with Output (top) & Code (bottom)
+    Launches the Tkinter GUI, reading Windows DPI scaling dynamically for the primary monitor.
     """
     root = tk.Tk()
-    root.title("C++ Generation & Fixer GUI (Dark Mode, PanedWindow)")
+    root.title("C++ Generation & Fixer GUI (Dynamic DPI Scaling)")
 
-    # ------------------ Dark Theme Setup ------------------ #
+    # Attempt to apply dynamic scaling from Windows
+    try:
+        root.tk.call("tk", "scaling", SCALING_VALUE)
+    except Exception:
+        pass
+
+    # Dark Theme & Font Setup
     style = ttk.Style()
     style.theme_use('clam')
-    style.configure(".", background="gray15", foreground="white")
-    style.configure("TFrame", background="gray15", foreground="white")
-    style.configure("TLabel", background="gray15", foreground="white")
-    style.configure("TButton", background="gray25", foreground="white")
+    style.configure(".", background="gray15", foreground="white", font=("Arial", 12))
+    style.configure("TFrame", background="gray15", foreground="white", font=("Arial", 12))
+    style.configure("TLabel", background="gray15", foreground="white", font=("Arial", 12))
+    style.configure("TButton", background="gray25", foreground="white", font=("Arial", 12))
     style.configure("TScrollbar", background="gray25")
 
     root.configure(bg="gray15")
@@ -702,7 +726,7 @@ def gui_main():
 
     prompt_text = scrolledtext.ScrolledText(top_frame, wrap=tk.WORD, height=5)
     prompt_text.pack(side=tk.TOP, fill=tk.X, expand=False)
-    prompt_text.config(bg="gray20", fg="white", insertbackground="white")
+    prompt_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
 
     button_frame = ttk.Frame(top_frame)
     button_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -726,13 +750,13 @@ def gui_main():
     history_label = ttk.Label(left_frame, text="Past Generations / Fixes:")
     history_label.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
 
-    history_list = tk.Listbox(left_frame, width=30, bg="gray20", fg="white", selectbackground="gray40")
+    history_list = tk.Listbox(left_frame, width=30, bg="gray20", fg="white", selectbackground="gray40", font=("Arial", 12))
     history_list.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
     history_list.bind('<<ListboxSelect>>', lambda evt: on_history_select(evt, code_text, output_text, history_list))
 
     main_pane.add(left_frame, weight=1)
 
-    # Right Pane: Split vertically for Output (top) & Code (bottom)
+    # Right Pane: split vertically for Output (top) & Code (bottom)
     right_pane = ttk.Panedwindow(main_pane, orient=tk.VERTICAL)
     main_pane.add(right_pane, weight=4)
 
@@ -746,7 +770,7 @@ def gui_main():
 
     output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD)
     output_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-    output_text.config(bg="gray20", fg="white", insertbackground="white")
+    output_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
 
     right_pane.add(output_frame, weight=2)
 
@@ -760,11 +784,11 @@ def gui_main():
 
     code_text = scrolledtext.ScrolledText(code_frame, wrap=tk.WORD)
     code_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-    code_text.config(bg="gray20", fg="white", insertbackground="white")
+    code_text.config(bg="gray20", fg="white", insertbackground="white", font=("Consolas", 12))
 
     right_pane.add(code_frame, weight=3)
 
-    # Wire up the run button to the background thread
+    # Wire up the run button
     run_button.config(
         command=lambda: on_run_button_click(code_text, prompt_text, output_text, history_list, run_button, stop_button, root)
     )
