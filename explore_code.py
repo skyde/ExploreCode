@@ -205,7 +205,7 @@ def load_last_generated_code(session_folder: str) -> str:
     print("[load_last_generated_code] No previous generation code found.")
     return ""
 
-# ------------------ PyQt Dark Mode & GUI Implementation ------------------ #
+# ------------------ GUI Implementation ------------------ #
 
 class WorkerSignals(QObject):
     log = pyqtSignal(str)
