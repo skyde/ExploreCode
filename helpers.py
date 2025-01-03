@@ -69,3 +69,20 @@ def read_file(filename):
     print(f"[read_file] Reading from {filename}...\n")
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
+    
+def ensure_prompt_length_ok(prompt, max_length=50000):
+    """Raise an error if the prompt is too large."""
+    if len(prompt) > max_length:
+        raise ValueError(f"Prompt length {len(prompt)} exceeded maximum of {max_length} characters. Exiting...")
+
+def truncate_preserving_start_and_end(content, max_length=10000):
+    """
+    If content exceeds max_length, preserve the start and end while truncating the middle.
+    Useful for maintaining context in large text blocks while staying within token limits.
+    """
+    if len(content) <= max_length:
+        return content
+    half = max_length // 2
+    start_part = content[:half]
+    end_part = content[-half:]
+    return start_part + "\n... [TRUNCATED MIDDLE FOR LLM] ...\n" + end_part

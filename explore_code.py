@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 
+# ------------------ Configuration ------------------ #
+
+USE_DEBUG_PROMPT = False
+ALLOW_API_CALLS = False
+INITAL_MODEL_NAME = "o1-mini"
+FIX_MODEL_NAME = "o1-mini"
+MAX_ITERATIONS = 10
+
+GENERATED_ROOT_FOLDER = "generated"
+EXECUTABLE = "program"  # We'll compile the code to a program each iteration
+PRINT_SEND = True
+
+MAX_PROMPT_LENGTH = 50000
+
+# ------------------ Includes ------------------ #
+
 import os
 import sys
 import datetime
@@ -7,7 +23,13 @@ import re
 
 from ai_service import AIService
 import helpers
-from helpers import write_to_file, append_to_file, read_file
+from helpers import (
+    write_to_file, 
+    append_to_file, 
+    read_file, 
+    ensure_prompt_length_ok,
+    truncate_preserving_start_and_end
+)
 
 # PyQt Imports
 from PyQt5.QtWidgets import (
@@ -32,21 +54,7 @@ from gui_style import apply_dark_mode
 # Import the helper class from cpp_compiler.py
 from cpp_compiler import CppCompiler
 
-# ------------------ Original Configuration ------------------ #
-
-USE_DEBUG_PROMPT = False
-ALLOW_API_CALLS = False
-INITAL_MODEL_NAME = "o1-mini"
-FIX_MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 10
-
-GENERATED_ROOT_FOLDER = "generated"
-EXECUTABLE = "program"  # We'll compile the code to a program each iteration
-PRINT_SEND = True
-
-MAX_PROMPT_LENGTH = 50000
-
-# ------------------ Setup Open Service ------------------ #
+# ------------------ Setup AI Service ------------------ #
 
 ai_service = AIService(not ALLOW_API_CALLS)
 
@@ -106,7 +114,7 @@ def fix_code_until_success_or_limit(
 
         if not success:
             print("[main] Compilation failed. Requesting new fix...\n")
-            truncated_compile_log = maybe_truncate_for_llm(error_message, max_length=7000)
+            truncated_compile_log = truncate_preserving_start_and_end(error_message, max_length=7000)
             fix_input = (
                 f"{fix_prompt}\n"
                 f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
@@ -128,7 +136,7 @@ def fix_code_until_success_or_limit(
             return True, current_code
         else:
             print("[main] Code failed again. Requesting further fix...\n")
-            truncated_test_output = maybe_truncate_for_llm(test_output, max_length=7000)
+            truncated_test_output = truncate_preserving_start_and_end(test_output, max_length=7000)
             fix_input = (
                 f"{fix_prompt}\n"
                 f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
@@ -281,7 +289,7 @@ class GenerationWorker(QThread):
             else:
                 if compile_err:
                     self.signals.log.emit("[GUI] Fixing compile error...\n")
-                    truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
+                    truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
                     fix_input = (
                         f"{helpers.FIX_PROMPT}\n"
                         f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
@@ -308,7 +316,7 @@ class GenerationWorker(QThread):
                             single_file_code = fixed_code
                 else:
                     self.signals.log.emit("[GUI] Fixing runtime error...\n")
-                    truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
+                    truncated_test_output = truncate_preserving_start_and_end(runtime_out, max_length=7000)
                     fix_input = (
                         f"{helpers.FIX_PROMPT}\n"
                         f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
@@ -379,7 +387,7 @@ class GenerationWorker(QThread):
                 else:
                     if compile_err:
                         self.signals.log.emit("[GUI] Attempting compile fix...\n")
-                        truncated_compile_log = maybe_truncate_for_llm(compile_err, max_length=7000)
+                        truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
                         fix_input = (
                             f"{helpers.FIX_PROMPT}\n"
                             f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
@@ -389,7 +397,7 @@ class GenerationWorker(QThread):
                         single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
                     else:
                         self.signals.log.emit("[GUI] Attempting runtime fix...\n")
-                        truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
+                        truncated_test_output = truncate_preserving_start_and_end(runtime_out, max_length=7000)
                         fix_input = (
                             f"{helpers.FIX_PROMPT}\n"
                             f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
