@@ -3,7 +3,7 @@
 # ------------------ Configuration ------------------ #
 
 USE_DEBUG_PROMPT = False
-ALLOW_API_CALLS = True
+ALLOW_API_CALLS = False
 INITAL_MODEL_NAME = "o1-mini"
 FIX_MODEL_NAME = "o1-mini"
 MAX_ITERATIONS = 10
@@ -205,7 +205,7 @@ def load_iteration_history_from_folder(session_folder: str):
     that the GUI can show in the 'History' list. Each dict has:
       {
         'label': str,   # e.g. "generated_v1"
-        'code': str,    
+        'code': str,
         'output': str,  # combined compile & runtime logs
       }
     The list is sorted by version number found in the filename.
@@ -216,16 +216,14 @@ def load_iteration_history_from_folder(session_folder: str):
     # We look for code like "generated_vN.cpp" or "something_fix_vN.cpp"
     # and logs like "output_vN.txt" or "output_fix_vN.txt".
     code_pattern = re.compile(r"(.*)_v(\d+)\.cpp$")
-    output_pattern = re.compile(r"output.*_v(\d+)\.txt$")  # or "output_v(\d+).txt"
+    output_pattern = re.compile(r"output.*_v(\d+)\.txt$")
 
-    # Keep a map version -> { 'code': "", 'output': "", 'label': "" }
-    # We can guess a label from the code or fallback to "vN".
     versions_map = {}
 
     for filename in os.listdir(session_folder):
         full_path = os.path.join(session_folder, filename)
         if os.path.isfile(full_path):
-            # Check if it's one of the .cpp files
+            # Check .cpp
             cmatch = code_pattern.match(filename)
             if cmatch:
                 prefix = cmatch.group(1)
@@ -236,7 +234,7 @@ def load_iteration_history_from_folder(session_folder: str):
                 versions_map[version]['code'] = read_file(full_path)
                 versions_map[version]['label'] = f"{prefix}_v{version}"
 
-            # Check if it's one of the output files
+            # Check .txt
             omatch = output_pattern.match(filename)
             if omatch:
                 vstr = omatch.group(1)
@@ -273,6 +271,9 @@ class WorkerSignals(QObject):
     log = pyqtSignal(str)
     finished = pyqtSignal()
 
+    # NEW SIGNAL: Fires whenever a new file is written so the GUI can refresh its data from disk.
+    data_updated = pyqtSignal(str)  # session_folder path
+
 
 class GenerationWorker(QThread):
     """
@@ -284,7 +285,6 @@ class GenerationWorker(QThread):
         super().__init__()
         self.code_input = code_input
         self.prompt_input = prompt_input
-        self.iteration_history = []
         self.session_folder = None
 
     def run(self):
@@ -306,15 +306,18 @@ class GenerationWorker(QThread):
         EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
         PROMPT_FILE = os.path.join(self.session_folder, "prompt.txt")
 
+        # Let the GUI know we've created a new session folder
+        self.signals.data_updated.emit(self.session_folder)
+
         initial_code_success = False
         single_file_code = ""
 
-        # Try the user-supplied code first
+        # Try user-supplied code first
         if self.code_input.strip() and not generation_stopped:
             iteration_label = "Initial Code"
             init_code_filename = os.path.join(self.session_folder, "initial_code.cpp")
 
-            # We'll treat this as iteration 0 so the output is "output_v0.txt"
+            self.signals.log.emit("[GUI] Attempting to compile/run initial code...\n")
             success, combined_log = compile_run_check_code(
                 self.code_input,
                 0,
@@ -324,18 +327,13 @@ class GenerationWorker(QThread):
                 iteration_label
             )
 
-            # Add to iteration history
-            iteration_data = {
-                'label': iteration_label,
-                'code': self.code_input,
-                'output': combined_log
-            }
-            self.iteration_history.append(iteration_data)
+            # After writing these files, emit data_updated so the UI reloads
+            self.signals.data_updated.emit(self.session_folder)
 
             if success:
+                self.signals.log.emit("[GUI] Initial code compiled and ran successfully.\n")
                 initial_code_success = True
             else:
-                # Attempt fix if code fails
                 self.signals.log.emit(f"[GUI] {iteration_label} failed. Attempting fix...\n")
                 truncated_log = truncate_preserving_start_and_end(combined_log, max_length=7000)
                 fix_input = (
@@ -344,34 +342,38 @@ class GenerationWorker(QThread):
                     f"Current Code:\n{self.code_input}"
                 )
                 ensure_prompt_length_ok(fix_input)
+                self.signals.log.emit("[GUI] Requesting fix from AI...\n")
                 single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
 
                 if not generation_stopped:
+                    self.signals.log.emit("[GUI] Attempting fix_code_until_success_or_limit...\n")
                     success_fix, fixed_code = fix_code_until_success_or_limit(
                         single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
                     )
-                    iteration_data = {
-                        'label': "Fixed Initial Code",
-                        'code': fixed_code,
-                        'output': "Fix pass completed"
-                    }
-                    self.iteration_history.append(iteration_data)
+
+                    # After fix attempts, emit data_updated so the UI reloads
+                    self.signals.data_updated.emit(self.session_folder)
+
                     if success_fix:
+                        self.signals.log.emit("[GUI] Fixed initial code succeeded.\n")
                         initial_code_success = True
                         single_file_code = fixed_code
 
-        # If initial code isn't successful, or there's no code, generate from scratch using the prompt
+        # If initial code isn't successful or no code was given, generate from prompt
         if not initial_code_success and not generation_stopped:
             if not self.prompt_input.strip():
                 self.signals.log.emit("[GUI] No code or prompt provided. Stopping.\n")
                 self.signals.finished.emit()
                 return
 
-            # Write the prompt to the session folder
+            # Write the prompt to disk
             write_to_file(PROMPT_FILE, self.prompt_input)
             append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{self.prompt_input}\n\n")
 
-            # Ask AI to create new code
+            # Emit data_updated
+            self.signals.data_updated.emit(self.session_folder)
+
+            self.signals.log.emit("[GUI] Generating new code from prompt...\n")
             combined_prompt_user = f"""
 {helpers.GENERATE_PROMPT_USER}
 \"\"\"{self.prompt_input}\"\"\" 
@@ -379,7 +381,6 @@ class GenerationWorker(QThread):
             ensure_prompt_length_ok(combined_prompt_user)
             single_file_code = ai_service.call_ai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
-            # Attempt compilation/fix for up to MAX_ITERATIONS
             for iteration in range(1, MAX_ITERATIONS + 1):
                 if generation_stopped:
                     break
@@ -387,6 +388,7 @@ class GenerationWorker(QThread):
                 iteration_label = f"Iteration {iteration}"
                 gen_code_filename = os.path.join(self.session_folder, f"generated_v{iteration}.cpp")
 
+                self.signals.log.emit(f"[GUI] {iteration_label} - compiling/running code...\n")
                 success, combined_log = compile_run_check_code(
                     single_file_code,
                     iteration,
@@ -396,17 +398,13 @@ class GenerationWorker(QThread):
                     iteration_label
                 )
 
-                iteration_data = {
-                    'label': f"generated_v{iteration}",
-                    'code': single_file_code,
-                    'output': combined_log
-                }
-                self.iteration_history.append(iteration_data)
+                # Emit data_updated after writing these iteration files
+                self.signals.data_updated.emit(self.session_folder)
 
                 if success:
+                    self.signals.log.emit(f"[GUI] {iteration_label} succeeded; stopping.\n")
                     break
                 else:
-                    # Attempt a fix
                     truncated_log = truncate_preserving_start_and_end(combined_log, max_length=7000)
                     if "error:" in combined_log.lower():
                         self.signals.log.emit("[GUI] Attempting compile fix...\n")
@@ -423,6 +421,7 @@ class GenerationWorker(QThread):
                             f"Current Code:\n{single_file_code}"
                         )
                     ensure_prompt_length_ok(fix_input)
+                    self.signals.log.emit("[GUI] Requesting fix from AI...\n")
                     single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
             else:
                 self.signals.log.emit(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
@@ -536,35 +535,39 @@ class MainWindow(QMainWindow):
     def on_load_from_disk(self):
         folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
         if folder:
-            # Load iteration data (including compile & runtime logs)
-            loaded_history = load_iteration_history_from_folder(folder)
-            # Also load prompt
-            loaded_prompt = load_prompt_from_folder(folder)
+            self.load_data_into_ui(folder)
 
-            # Clear UI
-            self.history_list.clear()
-            self._iteration_history.clear()
-            self.output_text.clear()
+    def load_data_into_ui(self, folder: str):
+        """
+        Grabs iteration history and prompt from disk, updates UI.
+        """
+        loaded_history = load_iteration_history_from_folder(folder)
+        loaded_prompt = load_prompt_from_folder(folder)
 
+        # Clear UI
+        self.history_list.clear()
+        self._iteration_history.clear()
+        self.output_text.clear()
+
+        if loaded_prompt:
+            self.prompt_edit.setPlainText(loaded_prompt)
+
+        if loaded_history:
+            self._iteration_history = loaded_history
+            for item in self._iteration_history:
+                self.history_list.addItem(item['label'])
+
+            # Automatically select & display the last iteration
+            last_index = len(self._iteration_history) - 1
+            self.history_list.setCurrentRow(last_index)
+            self.on_history_select(last_index)
+
+            self.append_log(f"[GUI] Loaded {len(loaded_history)} iteration(s) + prompt from '{folder}'\n")
+        else:
             if loaded_prompt:
-                self.prompt_edit.setPlainText(loaded_prompt)
-
-            if loaded_history:
-                self._iteration_history = loaded_history
-                for item in self._iteration_history:
-                    self.history_list.addItem(item['label'])
-
-                # Automatically select & display the last iteration
-                last_index = len(self._iteration_history) - 1
-                self.history_list.setCurrentRow(last_index)
-                self.on_history_select(last_index)
-
-                self.append_log(f"[GUI] Loaded {len(loaded_history)} iteration(s) + prompt from '{folder}'\n")
+                self.append_log(f"[GUI] No iteration files found, but loaded prompt from '{folder}'\n")
             else:
-                if loaded_prompt:
-                    self.append_log(f"[GUI] No iteration files found, but loaded prompt from '{folder}'\n")
-                else:
-                    self.append_log(f"[GUI] No iteration files or prompt found in '{folder}'\n")
+                self.append_log(f"[GUI] No iteration files or prompt found in '{folder}'\n")
 
     def start_generation(self):
         if self.worker_thread and self.worker_thread.isRunning():
@@ -573,7 +576,7 @@ class MainWindow(QMainWindow):
         code_input = self.code_edit.toPlainText()
         prompt_input = self.prompt_edit.toPlainText()
 
-        # Clear old history
+        # Clear old history in the UI
         self.history_list.clear()
         self._iteration_history.clear()
         self.output_text.clear()
@@ -582,6 +585,7 @@ class MainWindow(QMainWindow):
         self.worker_thread = GenerationWorker(code_input, prompt_input)
         self.worker_thread.signals.log.connect(self.append_log)
         self.worker_thread.signals.finished.connect(self.generation_finished)
+        self.worker_thread.signals.data_updated.connect(self.on_data_updated_from_worker)
         self.worker_thread.started.connect(self.on_generation_started)
         self.worker_thread.start()
 
@@ -598,16 +602,24 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.append_log("[GUI] Generation thread finished.\n")
-        if self.worker_thread:
-            self._iteration_history = self.worker_thread.iteration_history
-            self.history_list.clear()
-            for item in self._iteration_history:
-                self.history_list.addItem(item['label'])
+
+    def on_data_updated_from_worker(self, session_folder):
+        """
+        This is triggered whenever the worker writes new files to disk.
+        We reload from disk so the History/Code/Output is always in sync.
+        """
+        self.load_data_into_ui(session_folder)
 
     def append_log(self, message):
+        """
+        Appends the incoming log message to the output text,
+        and forces a UI refresh so we see it immediately.
+        """
         self.output_text.moveCursor(self.output_text.textCursor().End)
         self.output_text.insertPlainText(message)
         self.output_text.moveCursor(self.output_text.textCursor().End)
+        # Force the UI to process pending events right away
+        QApplication.processEvents()
 
     def on_history_select(self, index):
         """
