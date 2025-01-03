@@ -25,7 +25,7 @@ import syntax_highlighter
 from gui_style import apply_dark_mode
 
 # Import logic-only module
-import explore_code
+import api
 
 # ------------------ Worker Signals ------------------ #
 
@@ -57,7 +57,7 @@ class GenerationWorker(QThread):
         Calls into explore_code.py functions, forwarding logs & events via signals.
         """
         # Create session folder using logic module
-        session_folder = explore_code.create_session_folder(self.prompt_input)
+        session_folder = api.create_session_folder(self.prompt_input)
         everything_file = os.path.join(session_folder, "everything.cpp")
 
         # Define signal forwarding callbacks
@@ -72,7 +72,7 @@ class GenerationWorker(QThread):
 
         # Run the generation logic
         log_func("[GUI Worker] Starting generation process...\n")
-        explore_code.run_generation_process(
+        api.run_generation_process(
             code_input=self.code_input,
             prompt_input=self.prompt_input,
             session_folder=session_folder,
@@ -199,8 +199,8 @@ class MainWindow(QMainWindow):
         """
         Grabs iteration history and prompt from disk, updates UI.
         """
-        loaded_history = explore_code.load_iteration_history_from_folder(folder)
-        loaded_prompt = explore_code.load_prompt_from_folder(folder)
+        loaded_history = api.load_iteration_history_from_folder(folder)
+        loaded_prompt = api.load_prompt_from_folder(folder)
 
         self.history_list.clear()
         self._iteration_history.clear()
@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
         """
         Tells the logic side to halt the generation loop.
         """
-        explore_code.stop_generation()
+        api.stop_generation()
         self.append_log("[GUI] Stop signal sent to logic.\n")
 
     def generation_finished(self):
