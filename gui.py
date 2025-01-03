@@ -42,7 +42,7 @@ class WorkerSignals(QObject):
 
 class GenerationWorker(QThread):
     """
-    A QThread-based worker that calls the logic in explore_code.py
+    A QThread-based worker that calls the logic in api.py
     but emits signals to update the GUI.
     """
     signals = WorkerSignals()
@@ -54,13 +54,9 @@ class GenerationWorker(QThread):
 
     def run(self):
         """
-        Calls into explore_code.py functions, forwarding logs & events via signals.
+        Calls into api.run_generation_process, forwarding logs & events via signals.
         """
-        # Create session folder using logic module
-        session_folder = api.create_session_folder(self.prompt_input)
-        everything_file = os.path.join(session_folder, "everything.cpp")
-
-        # Define signal forwarding callbacks
+        # Define signal-forwarding callbacks
         def log_func(msg):
             self.signals.log.emit(msg)
 
@@ -70,13 +66,13 @@ class GenerationWorker(QThread):
         def finished_func():
             self.signals.finished.emit()
 
-        # Run the generation logic
         log_func("[GUI Worker] Starting generation process...\n")
+
+        # We no longer create the session folder or everything file here.
+        # That logic is now in api.run_generation_process.
         api.run_generation_process(
             code_input=self.code_input,
             prompt_input=self.prompt_input,
-            session_folder=session_folder,
-            everything_file=everything_file,
             log_func=log_func,
             data_updated_func=data_updated_func,
             finished_func=finished_func

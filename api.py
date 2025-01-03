@@ -223,34 +223,37 @@ def load_prompt_from_folder(session_folder: str) -> str:
 def run_generation_process(
     code_input: str,
     prompt_input: str,
-    session_folder: str,
-    everything_file: str,
     log_func=None,
     data_updated_func=None,
     finished_func=None
 ):
     """
     Runs the 'generation' process. 
-    - code_input: user-supplied C++ code (may be blank).
-    - prompt_input: user-supplied text prompt (may be blank).
-    - session_folder: path where we store all outputs.
-    - everything_file: single text file that accumulates everything (for debugging).
-    - log_func: a callback for logging messages if desired.
-    - data_updated_func: a callback to let the UI know new files were written.
-    - finished_func: a callback to signal everything is done.
+      - code_input: user-supplied C++ code (may be blank).
+      - prompt_input: user-supplied text prompt (may be blank).
+      - log_func: a callback for logging messages if desired.
+      - data_updated_func: a callback to let the UI know new files were written, passing the session folder.
+      - finished_func: a callback to signal everything is done.
     """
 
     global generation_stopped
     generation_stopped = False
 
-    # Helper to make sure we can do 'if log_func: log_func(...)' easily
+    # Create session folder and the everything file inside it.
+    session_folder = create_session_folder(prompt_input)
+    everything_file = os.path.join(session_folder, "everything.cpp")
+
+    # Helper to conditionally log
     def log(message: str):
         if log_func:
             log_func(message)
 
-    def data_updated(folder: str):
+    # Helper to alert the UI that new data is available
+    def data_updated():
         if data_updated_func:
-            data_updated_func(folder)
+            data_updated_func(session_folder)
+
+    log("[Logic] Starting generation process.\n")
 
     # PART 1: Attempt user-supplied code (if any)
     initial_code_success = False
@@ -262,7 +265,7 @@ def run_generation_process(
         success, combined_log = compile_run_check_code(
             single_file_code, 0, init_code_filename, session_folder, everything_file, "Initial Code"
         )
-        data_updated(session_folder)
+        data_updated()
 
         if success:
             log("[Logic] Initial code compiled and ran successfully.\n")
@@ -284,7 +287,7 @@ def run_generation_process(
                 success_fix, fixed_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, everything_file, "initial_code"
                 )
-                data_updated(session_folder)
+                data_updated()
 
                 if success_fix:
                     log("[Logic] Fixed initial code succeeded.\n")
@@ -303,7 +306,7 @@ def run_generation_process(
         prompt_file = os.path.join(session_folder, "prompt.txt")
         helpers.write_to_file(prompt_file, prompt_input)
         append_to_file(everything_file, f"===== Prompt =====\n{prompt_input}\n\n")
-        data_updated(session_folder)
+        data_updated()
 
         log("[Logic] Generating new code from prompt...\n")
         combined_prompt_user = f"""
@@ -329,7 +332,7 @@ def run_generation_process(
                 everything_file,
                 iteration_label
             )
-            data_updated(session_folder)
+            data_updated()
 
             if success:
                 log(f"[Logic] {iteration_label} succeeded; stopping.\n")
@@ -360,6 +363,7 @@ def run_generation_process(
     if finished_func:
         finished_func()
 
+
 def create_session_folder(prompt_input):
     """
     Creates and returns a new session folder based on timestamp and prompt.
@@ -382,6 +386,5 @@ def create_session_folder(prompt_input):
     return session_folder
 
 if __name__ == "__main__":
-    # Example usage without GUI:
-    # You can run "python explore_code.py" (though you might want to call run_generation_process yourself here).
+    # Example usage (without GUI) would be manually calling run_generation_process(...)
     pass
