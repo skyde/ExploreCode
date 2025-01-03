@@ -35,7 +35,7 @@ from cpp_compiler import CppCompiler
 # ------------------ Original Configuration ------------------ #
 
 USE_DEBUG_PROMPT = False
-INITAL_MODEL_NAME = "o1-preview"
+INITAL_MODEL_NAME = "o1-mini"
 FIX_MODEL_NAME = "o1-mini"
 MAX_ITERATIONS = 4
 
