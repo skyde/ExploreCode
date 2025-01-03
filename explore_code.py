@@ -66,12 +66,6 @@ def maybe_truncate_for_llm(content, max_length=10000):
 
 # ------------------ OpenAI Helpers ------------------ #
 
-def call_openai(system_prompt, user_prompt, model, temperature=0.2):
-    """
-    Wrapper for backwards compatibility
-    """
-    return ai_service.call_ai(system_prompt, user_prompt, model, temperature)
-
 # ------------------ File Helpers ------------------ #
 
 def write_to_file(filename, content):
@@ -141,7 +135,7 @@ def fix_code_until_success_or_limit(
                 f"Current Code:\n{current_code}"
             )
             ensure_prompt_length_ok(fix_input)
-            current_code = call_openai("", fix_input, FIX_MODEL_NAME)
+            current_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
             continue
 
         print(f"[main] Running {label_prefix} code iteration {fix_iteration}...\n")
@@ -163,7 +157,7 @@ def fix_code_until_success_or_limit(
                 f"Current Code:\n{current_code}"
             )
             ensure_prompt_length_ok(fix_input)
-            current_code = call_openai("", fix_input, FIX_MODEL_NAME)
+            current_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
 
     return False, current_code
 
@@ -299,7 +293,7 @@ def cli_main():
                     f"Current Code:\n{initial_code}"
                 )
                 ensure_prompt_length_ok(fix_input)
-                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+                single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
                 initial_code_success, single_file_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
                 )
@@ -311,7 +305,7 @@ def cli_main():
                     f"Current Code:\n{initial_code}"
                 )
                 ensure_prompt_length_ok(fix_input)
-                single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+                single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
                 initial_code_success, single_file_code = fix_code_until_success_or_limit(
                     single_file_code, session_folder, EVERYTHING_FILE, "initial_code", ""
                 )
@@ -340,7 +334,7 @@ def cli_main():
 \"\"\"{user_problem}\"\"\" 
 """
         ensure_prompt_length_ok(combined_prompt_user)
-        single_file_code = call_openai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
+        single_file_code = ai_service.call_ai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
         for iteration in range(1, MAX_ITERATIONS + 1):
             gen_code_filename = os.path.join(session_folder, f"generated_v{iteration}.cpp")
@@ -358,7 +352,7 @@ def cli_main():
                         f"Current Code:\n{single_file_code}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
+                    single_file_code = ai_service.call_ai(user_problem, fix_input, FIX_MODEL_NAME)
                 else:
                     truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
                     fix_input = (
@@ -367,7 +361,7 @@ def cli_main():
                         f"Current Code:\n{single_file_code}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai(user_problem, fix_input, FIX_MODEL_NAME)
+                    single_file_code = ai_service.call_ai(user_problem, fix_input, FIX_MODEL_NAME)
         else:
             print(f"[main] Reached the maximum number of iterations ({MAX_ITERATIONS}) without success.\n")
 
@@ -441,7 +435,7 @@ class GenerationWorker(QThread):
                         f"Current Code:\n{self.code_input}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+                    single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
 
                     if not generation_stopped:
                         success_fix, fixed_code = fix_code_until_success_or_limit(
@@ -468,7 +462,7 @@ class GenerationWorker(QThread):
                         f"Current Code:\n{self.code_input}"
                     )
                     ensure_prompt_length_ok(fix_input)
-                    single_file_code = call_openai("", fix_input, FIX_MODEL_NAME)
+                    single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
 
                     if not generation_stopped:
                         success_fix, fixed_code = fix_code_until_success_or_limit(
@@ -501,7 +495,7 @@ class GenerationWorker(QThread):
 \"\"\"{self.prompt_input}\"\"\" 
 """
             ensure_prompt_length_ok(combined_prompt_user)
-            single_file_code = call_openai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
+            single_file_code = ai_service.call_ai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
             for iteration in range(1, MAX_ITERATIONS + 1):
                 if generation_stopped:
@@ -539,7 +533,7 @@ class GenerationWorker(QThread):
                             f"Current Code:\n{single_file_code}"
                         )
                         ensure_prompt_length_ok(fix_input)
-                        single_file_code = call_openai(self.prompt_input, fix_input, FIX_MODEL_NAME)
+                        single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
                     else:
                         self.signals.log.emit("[GUI] Attempting runtime fix...\n")
                         truncated_test_output = maybe_truncate_for_llm(runtime_out, max_length=7000)
@@ -549,7 +543,7 @@ class GenerationWorker(QThread):
                             f"Current Code:\n{single_file_code}"
                         )
                         ensure_prompt_length_ok(fix_input)
-                        single_file_code = call_openai(self.prompt_input, fix_input, FIX_MODEL_NAME)
+                        single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
             else:
                 self.signals.log.emit(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
 
