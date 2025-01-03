@@ -1,4 +1,5 @@
 import re
+import os
 
 DEBUG_PROMPT = """
 - Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
@@ -48,3 +49,23 @@ def sanitize_for_filename(text, max_length=30):
     if len(safe_text) > max_length:
         safe_text = safe_text[:max_length]
     return safe_text
+
+def write_to_file(filename, content):
+    """Overwrites the file with the given content."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    print(f"[write_to_file] Writing to {filename}...\n")
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(content)
+
+def append_to_file(filename, content):
+    """Appends the given content to the file with a separator line."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(content)
+        f.write("\n\n")
+
+def read_file(filename):
+    """Reads and returns the content of a file."""
+    print(f"[read_file] Reading from {filename}...\n")
+    with open(filename, "r", encoding="utf-8") as f:
+        return f.read()

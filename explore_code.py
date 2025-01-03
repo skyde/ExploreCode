@@ -7,6 +7,7 @@ import re
 
 from ai_service import AIService
 import helpers
+from helpers import write_to_file, append_to_file, read_file
 
 # PyQt Imports
 from PyQt5.QtWidgets import (
@@ -45,7 +46,7 @@ PRINT_SEND = True
 
 MAX_PROMPT_LENGTH = 50000
 
-# ------------------ Setup OpenAI ------------------ #
+# ------------------ Setup Open Service ------------------ #
 
 ai_service = AIService(not ALLOW_API_CALLS)
 
@@ -64,30 +65,6 @@ def maybe_truncate_for_llm(content, max_length=10000):
     start_part = content[:half]
     end_part = content[-half:]
     return start_part + "\n... [TRUNCATED MIDDLE FOR LLM] ...\n" + end_part
-
-# ------------------ OpenAI Helpers ------------------ #
-
-# ------------------ File Helpers ------------------ #
-
-def write_to_file(filename, content):
-    """Overwrites the file with the given content."""
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    print(f"[write_to_file] Writing to {filename}...\n")
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(content)
-
-def append_to_file(filename, content):
-    """Appends the given content to the file with a separator line."""
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, "a", encoding="utf-8") as f:
-        f.write(content)
-        f.write("\n\n")
-
-def read_file(filename):
-    """Reads and returns the content of a file."""
-    print(f"[read_file] Reading from {filename}...\n")
-    with open(filename, "r", encoding="utf-8") as f:
-        return f.read()
 
 # ------------------ Instantiate the global compiler ------------------ #
 cpp_compiler = CppCompiler()
