@@ -34,9 +34,10 @@ from cpp_compiler import CppCompiler
 # ------------------ Original Configuration ------------------ #
 
 USE_DEBUG_PROMPT = False
+ALLOW_API_CALLS = False
 INITAL_MODEL_NAME = "o1-mini"
 FIX_MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 4
+MAX_ITERATIONS = 10
 
 GENERATED_ROOT_FOLDER = "generated"
 EXECUTABLE = "program"  # We'll compile the code to a program each iteration
@@ -46,7 +47,7 @@ MAX_PROMPT_LENGTH = 50000
 
 # ------------------ Setup OpenAI ------------------ #
 
-ai_service = AIService()
+ai_service = AIService(not ALLOW_API_CALLS)
 
 # ------------------ Utility: Prompt Length Checker ------------------ #
 
