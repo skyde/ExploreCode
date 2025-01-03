@@ -24,9 +24,9 @@ import re
 from ai_service import AIService
 import helpers
 from helpers import (
-    write_to_file, 
-    append_to_file, 
-    read_file, 
+    write_to_file,
+    append_to_file,
+    read_file,
     ensure_prompt_length_ok,
     truncate_preserving_start_and_end
 )
@@ -75,6 +75,7 @@ def fix_code_until_success_or_limit(
     """
     Attempt to compile and run 'initial_code'. If compilation/runtime fails,
     request a fix from OpenAI. Repeat until success or max iteration limit.
+    Returns: (success: bool, final_code: str).
     """
     global generation_stopped
     current_code = initial_code
@@ -83,27 +84,31 @@ def fix_code_until_success_or_limit(
         if generation_stopped:
             break
 
+        # Save the code for this iteration
         fix_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}.cpp")
         write_to_file(fix_file, current_code)
         append_to_file(everything_file, f"===== {label_prefix} Fix Iteration {fix_iteration} =====\n{current_code}")
 
+        # Compile
         print(f"[main] Compiling {label_prefix} code iteration {fix_iteration}...\n")
-        success, error_message = cpp_compiler.compile_cpp(fix_file, os.path.join(session_folder, EXECUTABLE))
+        success, compile_output = cpp_compiler.compile_cpp(fix_file, os.path.join(session_folder, EXECUTABLE))
 
-        # Write/append compile output to the same file used for runtime output
-        combined_output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_output.txt")
+        # Single combined output file name
+        iteration_output_file = os.path.join(session_folder, f"output_fix_v{fix_iteration}.txt")
+
+        # Write the compile log
         write_to_file(
-            combined_output_file,
-            f"===== {label_prefix} Fix Iteration {fix_iteration} Compilation Output =====\n{error_message}\n\n"
+            iteration_output_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Compile Log =====\n{compile_output}\n\n"
         )
         append_to_file(
             everything_file,
-            f"===== {label_prefix} Fix Iteration {fix_iteration} Compile Output =====\n{error_message}"
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Compile Log =====\n{compile_output}"
         )
 
         if not success:
             print("[main] Compilation failed. Requesting new fix...\n")
-            truncated_compile_log = truncate_preserving_start_and_end(error_message, max_length=7000)
+            truncated_compile_log = truncate_preserving_start_and_end(compile_output, max_length=7000)
             fix_input = (
                 f"{fix_prompt}\n"
                 f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
@@ -113,17 +118,18 @@ def fix_code_until_success_or_limit(
             current_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
             continue
 
+        # If compilation succeeded, run
         print(f"[main] Running {label_prefix} code iteration {fix_iteration}...\n")
         test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
-        # Append runtime output into the same file
+        # Append runtime log
         append_to_file(
-            combined_output_file,
-            f"===== {label_prefix} Fix Iteration {fix_iteration} Run Output =====\n{test_output}\n\n"
+            iteration_output_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Runtime Log =====\n{test_output}\n\n"
         )
         append_to_file(
             everything_file,
-            f"===== {label_prefix} Fix Iteration {fix_iteration} Run Output =====\n{test_output}"
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Runtime Log =====\n{test_output}"
         )
 
         if test_success:
@@ -142,138 +148,113 @@ def fix_code_until_success_or_limit(
 
     return False, current_code
 
+
 def compile_run_check_code(
     code: str,
+    iteration_num: int,
     code_filename: str,
     session_folder: str,
     everything_file: str,
     label_prefix: str
 ):
     """
-    Compiles and runs the provided code, returning (success, error_message, runtime_output).
-    Both compile and runtime outputs are appended to the same output file.
+    Compiles and runs the provided code, returning (success: bool, combined_log: str).
+    The combined log merges compile + runtime logs together.
     """
+    # Write the code
     write_to_file(code_filename, code)
     append_to_file(everything_file, f"===== {label_prefix} Code =====\n{code}")
 
     print(f"[main] Compiling {label_prefix}...\n")
-    success, error_message = cpp_compiler.compile_cpp(code_filename, os.path.join(session_folder, EXECUTABLE))
+    success, compile_output = cpp_compiler.compile_cpp(code_filename, os.path.join(session_folder, EXECUTABLE))
 
-    # Write all compile logs to a single output file
-    combined_output_file = os.path.join(session_folder, f"{label_prefix}_output.txt")
-    write_to_file(
-        combined_output_file,
-        f"===== {label_prefix} Compile Output =====\n{error_message}\n\n"
-    )
-    append_to_file(
-        everything_file,
-        f"===== {label_prefix} Compile Output =====\n{error_message}\n\n"
-    )
+    # Single combined output file name: output_vN.txt
+    output_file = os.path.join(session_folder, f"output_v{iteration_num}.txt")
+    combined_log = f"===== {label_prefix} Compile Log =====\n{compile_output}\n\n"
+
+    # Write compile log
+    write_to_file(output_file, combined_log)
+    append_to_file(everything_file, f"===== {label_prefix} Compile Log =====\n{compile_output}\n\n")
 
     if not success:
-        print(f"[main] Error compiling {label_prefix}:\n{error_message}\n")
-        # Return the compile output separately as error_message, but we've also written it to the output file
-        return (False, error_message, "")
+        print(f"[main] Error compiling {label_prefix}:\n{compile_output}\n")
+        return (False, combined_log)  # Return compile log as the combined log
 
     print(f"[main] Running {label_prefix}...\n")
     test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
-    # Append runtime output to the same file
-    append_to_file(
-        combined_output_file,
-        f"===== {label_prefix} Run Output =====\n{test_output}\n\n"
-    )
-    append_to_file(
-        everything_file,
-        f"===== {label_prefix} Run Output =====\n{test_output}\n\n"
-    )
+    # Append runtime to combined log
+    runtime_log = f"===== {label_prefix} Runtime Log =====\n{test_output}\n\n"
+    append_to_file(output_file, runtime_log)
+    append_to_file(everything_file, runtime_log)
+    combined_log += runtime_log
 
     if not test_success:
         print("[main] Code run failed (non-zero exit).")
-        return (False, "", test_output)
+        return (False, combined_log)
     else:
         print("[main] Code run succeeded (exit code = 0). Tests passed!\n")
-        return (True, "", test_output)
+        return (True, combined_log)
+
 
 # ------------------ Load-from-disk Helpers ------------------ #
 
 def load_iteration_history_from_folder(session_folder: str):
     """
     Loads all iteration versions from the given folder. Returns a list of dicts
-    that the GUI can show in the 'History' list. Each dict has the same structure
-    used in the generation/fixing process:
+    that the GUI can show in the 'History' list. Each dict has:
       {
-        'label': str,
-        'code': str,
-        'output': str,
-        'compile_err': str
+        'label': str,   # e.g. "generated_v1"
+        'code': str,    
+        'output': str,  # combined compile & runtime logs
       }
     The list is sorted by version number found in the filename.
     """
     if not os.path.isdir(session_folder):
         return []
 
-    version_pattern = re.compile(r"(.*)_v(\d+)(\.cpp)$")
-    iterations_map = {}
+    # We look for code like "generated_vN.cpp" or "something_fix_vN.cpp"
+    # and logs like "output_vN.txt" or "output_fix_vN.txt".
+    code_pattern = re.compile(r"(.*)_v(\d+)\.cpp$")
+    output_pattern = re.compile(r"output.*_v(\d+)\.txt$")  # or "output_v(\d+).txt"
+
+    # Keep a map version -> { 'code': "", 'output': "", 'label': "" }
+    # We can guess a label from the code or fallback to "vN".
+    versions_map = {}
 
     for filename in os.listdir(session_folder):
         full_path = os.path.join(session_folder, filename)
         if os.path.isfile(full_path):
-            # Check for .cpp code with "_vN.cpp"
-            cpp_match = version_pattern.match(filename)
-            if cpp_match:
-                prefix = cpp_match.group(1)
-                version_str = cpp_match.group(2)
-                version = int(version_str)
-                if version not in iterations_map:
-                    iterations_map[version] = {
-                        'prefix': prefix, 
-                        'code': "",
-                        'compile_err': "",
-                        'output': ""
-                    }
-                iterations_map[version]['code'] = read_file(full_path)
-            # Since compile and runtime are now in a single "_output.txt" file,
-            # we only look for "_output.txt" to fill 'output' in the GUI.
-            elif filename.endswith("_output.txt"):
-                opattern = re.compile(r"(.*)_v(\d+)_output\.txt$")
-                omatch = opattern.match(filename)
-                if omatch:
-                    prefix = omatch.group(1)
-                    version_str = omatch.group(2)
-                    version = int(version_str)
-                    if version not in iterations_map:
-                        iterations_map[version] = {
-                            'prefix': prefix, 
-                            'code': "",
-                            'compile_err': "",
-                            'output': ""
-                        }
-                    # "output" in the iteration data will contain both compile + runtime logs now
-                    file_contents = read_file(full_path)
-                    iterations_map[version]['output'] = file_contents
-                    # For consistency with the old structure, set 'compile_err' if it detects any snippet
-                    # you consider compile error. (We keep it as a separate field so the GUI can still
-                    # show it distinctly if desired.)
-                    # If you want them fully combined, you can omit these lines:
-                    if "Error" in file_contents or "error:" in file_contents.lower():
-                        iterations_map[version]['compile_err'] = file_contents
+            # Check if it's one of the .cpp files
+            cmatch = code_pattern.match(filename)
+            if cmatch:
+                prefix = cmatch.group(1)
+                vstr = cmatch.group(2)
+                version = int(vstr)
+                if version not in versions_map:
+                    versions_map[version] = {'code': "", 'output': "", 'label': f"{prefix}_v{version}"}
+                versions_map[version]['code'] = read_file(full_path)
+                versions_map[version]['label'] = f"{prefix}_v{version}"
 
+            # Check if it's one of the output files
+            omatch = output_pattern.match(filename)
+            if omatch:
+                vstr = omatch.group(1)
+                version = int(vstr)
+                if version not in versions_map:
+                    versions_map[version] = {'code': "", 'output': "", 'label': f"v{version}"}
+                versions_map[version]['output'] = read_file(full_path)
+
+    # Build a list sorted by version
     iteration_list = []
-    for version in sorted(iterations_map.keys()):
-        prefix = iterations_map[version]['prefix']
-        code = iterations_map[version]['code']
-        compile_err = iterations_map[version]['compile_err']
-        output = iterations_map[version]['output']
-        label = f"{prefix}_v{version}"
-
+    for version in sorted(versions_map.keys()):
         iteration_list.append({
-            'label': label,
-            'code': code,
-            'compile_err': compile_err,
-            'output': output
+            'label': versions_map[version]['label'],
+            'code': versions_map[version]['code'],
+            'output': versions_map[version]['output']
         })
     return iteration_list
+
 
 def load_prompt_from_folder(session_folder: str) -> str:
     """
@@ -285,11 +266,13 @@ def load_prompt_from_folder(session_folder: str) -> str:
         return read_file(prompt_file)
     return ""
 
+
 # ------------------ GUI Implementation ------------------ #
 
 class WorkerSignals(QObject):
     log = pyqtSignal(str)
     finished = pyqtSignal()
+
 
 class GenerationWorker(QThread):
     """
@@ -317,7 +300,7 @@ class GenerationWorker(QThread):
             self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}_{snippet}")
         else:
             self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
-        
+
         os.makedirs(self.session_folder, exist_ok=True)
 
         EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
@@ -331,82 +314,51 @@ class GenerationWorker(QThread):
             iteration_label = "Initial Code"
             init_code_filename = os.path.join(self.session_folder, "initial_code.cpp")
 
-            success, compile_err, runtime_out = compile_run_check_code(
-                self.code_input, init_code_filename, self.session_folder, EVERYTHING_FILE, iteration_label
+            # We'll treat this as iteration 0 so the output is "output_v0.txt"
+            success, combined_log = compile_run_check_code(
+                self.code_input,
+                0,
+                init_code_filename,
+                self.session_folder,
+                EVERYTHING_FILE,
+                iteration_label
             )
 
+            # Add to iteration history
             iteration_data = {
                 'label': iteration_label,
                 'code': self.code_input,
-                'output': runtime_out if not compile_err else compile_err,
-                'compile_err': compile_err,
+                'output': combined_log
             }
             self.iteration_history.append(iteration_data)
-
-            if compile_err:
-                self.signals.log.emit(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
-            else:
-                self.signals.log.emit(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
 
             if success:
                 initial_code_success = True
             else:
-                # If it failed, attempt a fix
-                if compile_err:
-                    self.signals.log.emit("[GUI] Fixing compile error...\n")
-                    truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
-                    fix_input = (
-                        f"{helpers.FIX_PROMPT}\n"
-                        f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
-                        f"Current Code:\n{self.code_input}"
+                # Attempt fix if code fails
+                self.signals.log.emit(f"[GUI] {iteration_label} failed. Attempting fix...\n")
+                truncated_log = truncate_preserving_start_and_end(combined_log, max_length=7000)
+                fix_input = (
+                    f"{helpers.FIX_PROMPT}\n"
+                    f"Compilation/Runtime Log:\n{truncated_log}\n"
+                    f"Current Code:\n{self.code_input}"
+                )
+                ensure_prompt_length_ok(fix_input)
+                single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
+
+                if not generation_stopped:
+                    success_fix, fixed_code = fix_code_until_success_or_limit(
+                        single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
                     )
-                    ensure_prompt_length_ok(fix_input)
-                    single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
-
-                    if not generation_stopped:
-                        success_fix, fixed_code = fix_code_until_success_or_limit(
-                            single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
-                        )
-                        iteration_data = {
-                            'label': "Fixed Initial Code",
-                            'code': fixed_code,
-                            'output': "Fix pass completed",
-                            'compile_err': "",
-                        }
-                        self.iteration_history.append(iteration_data)
-                        self.signals.log.emit("[GUI] Compile fix pass done.\n")
-
-                        if success_fix:
-                            initial_code_success = True
-                            single_file_code = fixed_code
-                else:
-                    # There's a runtime failure
-                    self.signals.log.emit("[GUI] Fixing runtime error...\n")
-                    truncated_test_output = truncate_preserving_start_and_end(runtime_out, max_length=7000)
-                    fix_input = (
-                        f"{helpers.FIX_PROMPT}\n"
-                        f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
-                        f"Current Code:\n{self.code_input}"
-                    )
-                    ensure_prompt_length_ok(fix_input)
-                    single_file_code = ai_service.call_ai("", fix_input, FIX_MODEL_NAME)
-
-                    if not generation_stopped:
-                        success_fix, fixed_code = fix_code_until_success_or_limit(
-                            single_file_code, self.session_folder, EVERYTHING_FILE, "initial_code", ""
-                        )
-                        iteration_data = {
-                            'label': "Fixed Initial Code (Runtime)",
-                            'code': fixed_code,
-                            'output': "Fix pass completed",
-                            'compile_err': "",
-                        }
-                        self.iteration_history.append(iteration_data)
-                        self.signals.log.emit("[GUI] Runtime fix pass done.\n")
-
-                        if success_fix:
-                            initial_code_success = True
-                            single_file_code = fixed_code
+                    iteration_data = {
+                        'label': "Fixed Initial Code",
+                        'code': fixed_code,
+                        'output': "Fix pass completed"
+                    }
+                    self.iteration_history.append(iteration_data)
+                    if success_fix:
+                        initial_code_success = True
+                        single_file_code = fixed_code
 
         # If initial code isn't successful, or there's no code, generate from scratch using the prompt
         if not initial_code_success and not generation_stopped:
@@ -435,52 +387,49 @@ class GenerationWorker(QThread):
                 iteration_label = f"Iteration {iteration}"
                 gen_code_filename = os.path.join(self.session_folder, f"generated_v{iteration}.cpp")
 
-                success, compile_err, runtime_out = compile_run_check_code(
-                    single_file_code, gen_code_filename, self.session_folder, EVERYTHING_FILE, iteration_label
+                success, combined_log = compile_run_check_code(
+                    single_file_code,
+                    iteration,
+                    gen_code_filename,
+                    self.session_folder,
+                    EVERYTHING_FILE,
+                    iteration_label
                 )
 
                 iteration_data = {
-                    'label': iteration_label,
+                    'label': f"generated_v{iteration}",
                     'code': single_file_code,
-                    'output': runtime_out if not compile_err else compile_err,
-                    'compile_err': compile_err,
+                    'output': combined_log
                 }
                 self.iteration_history.append(iteration_data)
-
-                if compile_err:
-                    self.signals.log.emit(f"[GUI] {iteration_label} Compile Error:\n{compile_err}\n\n")
-                else:
-                    self.signals.log.emit(f"[GUI] {iteration_label} Output:\n{runtime_out}\n\n")
 
                 if success:
                     break
                 else:
                     # Attempt a fix
-                    if compile_err:
+                    truncated_log = truncate_preserving_start_and_end(combined_log, max_length=7000)
+                    if "error:" in combined_log.lower():
                         self.signals.log.emit("[GUI] Attempting compile fix...\n")
-                        truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
                         fix_input = (
                             f"{helpers.FIX_PROMPT}\n"
-                            f"Compilation/Verbose Logging Output:\n{truncated_compile_log}\n"
+                            f"Compilation/Runtime Log:\n{truncated_log}\n"
                             f"Current Code:\n{single_file_code}"
                         )
-                        ensure_prompt_length_ok(fix_input)
-                        single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
                     else:
                         self.signals.log.emit("[GUI] Attempting runtime fix...\n")
-                        truncated_test_output = truncate_preserving_start_and_end(runtime_out, max_length=7000)
                         fix_input = (
                             f"{helpers.FIX_PROMPT}\n"
-                            f"Runtime/Verbose Logging Output:\n{truncated_test_output}\n"
+                            f"Runtime/Verbose Logging Output:\n{truncated_log}\n"
                             f"Current Code:\n{single_file_code}"
                         )
-                        ensure_prompt_length_ok(fix_input)
-                        single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
+                    ensure_prompt_length_ok(fix_input)
+                    single_file_code = ai_service.call_ai(self.prompt_input, fix_input, FIX_MODEL_NAME)
             else:
                 self.signals.log.emit(f"[GUI] Reached max iterations ({MAX_ITERATIONS}) without success.\n")
 
         self.signals.log.emit("[GUI] Process finished. Check 'History' for details.\n")
         self.signals.finished.emit()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -579,7 +528,7 @@ class MainWindow(QMainWindow):
         self.run_button.clicked.connect(self.start_generation)
         self.stop_button.clicked.connect(self.stop_generation)
         self.history_list.currentRowChanged.connect(self.on_history_select)
-        
+
         # Attach syntax highlighters
         self.cpp_highlighter = syntax_highlighter.CppSyntaxHighlighter(self.code_edit.document())
         self.output_highlighter = syntax_highlighter.OutputHighlighter(self.output_text.document())
@@ -587,7 +536,7 @@ class MainWindow(QMainWindow):
     def on_load_from_disk(self):
         folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
         if folder:
-            # Load iteration data (including compile errors & runtime output)
+            # Load iteration data (including compile & runtime logs)
             loaded_history = load_iteration_history_from_folder(folder)
             # Also load prompt
             loaded_prompt = load_prompt_from_folder(folder)
@@ -663,7 +612,7 @@ class MainWindow(QMainWindow):
     def on_history_select(self, index):
         """
         When the user clicks on an iteration in the History list,
-        show that iteration's code and compile/runtime outputs.
+        show that iteration's code and combined logs.
         """
         if index < 0 or index >= len(self._iteration_history):
             return
@@ -671,17 +620,15 @@ class MainWindow(QMainWindow):
         data = self._iteration_history[index]
         self.code_edit.setPlainText(data['code'])
         self.output_text.clear()
-
-        if data['compile_err']:
-            self.output_text.insertPlainText("[Compile Error]\n" + data['compile_err'] + "\n\n")
-
         self.output_text.insertPlainText(data['output'])
+
 
 def gui_main_qt():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     gui_main_qt()
