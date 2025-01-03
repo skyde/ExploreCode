@@ -51,32 +51,16 @@ class GenerationWorker(QThread):
         super().__init__(parent)
         self.code_input = code_input
         self.prompt_input = prompt_input
-        self.session_folder = None
 
     def run(self):
         """
-        Calls into explore_code.run_generation_process(...) so we
-        don't keep logic in the GUI. We only forward logs & events via signals.
+        Calls into explore_code.py functions, forwarding logs & events via signals.
         """
-        # 1) Create a new session folder
-        timestamp = explore_code.datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        snippet = explore_code.helpers.sanitize_for_filename(self.prompt_input)
-        if snippet.strip():
-            self.session_folder = os.path.join(
-                explore_code.GENERATED_ROOT_FOLDER,
-                f"session_{timestamp}_{snippet}"
-            )
-        else:
-            self.session_folder = os.path.join(
-                explore_code.GENERATED_ROOT_FOLDER,
-                f"session_{timestamp}"
-            )
-        os.makedirs(self.session_folder, exist_ok=True)
+        # Create session folder using logic module
+        session_folder = explore_code.create_session_folder(self.prompt_input)
+        everything_file = os.path.join(session_folder, "everything.cpp")
 
-        # 2) "Everything" file accumulates logs
-        EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
-
-        # 3) Define local callbacks so we can pass them to run_generation_process
+        # Define signal forwarding callbacks
         def log_func(msg):
             self.signals.log.emit(msg)
 
@@ -86,13 +70,13 @@ class GenerationWorker(QThread):
         def finished_func():
             self.signals.finished.emit()
 
-        # 4) Actually run the generation logic
+        # Run the generation logic
         log_func("[GUI Worker] Starting generation process...\n")
         explore_code.run_generation_process(
             code_input=self.code_input,
             prompt_input=self.prompt_input,
-            session_folder=self.session_folder,
-            everything_file=EVERYTHING_FILE,
+            session_folder=session_folder,
+            everything_file=everything_file,
             log_func=log_func,
             data_updated_func=data_updated_func,
             finished_func=finished_func

@@ -360,6 +360,26 @@ def run_generation_process(
     if finished_func:
         finished_func()
 
+def create_session_folder(prompt_input):
+    """
+    Creates and returns a new session folder based on timestamp and prompt.
+    """
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    snippet = helpers.sanitize_for_filename(prompt_input)
+    
+    if snippet.strip():
+        session_folder = os.path.join(
+            GENERATED_ROOT_FOLDER,
+            f"session_{timestamp}_{snippet}"
+        )
+    else:
+        session_folder = os.path.join(
+            GENERATED_ROOT_FOLDER,
+            f"session_{timestamp}"
+        )
+    
+    os.makedirs(session_folder, exist_ok=True)
+    return session_folder
 
 if __name__ == "__main__":
     # Example usage without GUI:
