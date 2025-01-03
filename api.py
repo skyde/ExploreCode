@@ -385,6 +385,30 @@ def create_session_folder(prompt_input):
     os.makedirs(session_folder, exist_ok=True)
     return session_folder
 
+def reset_state():
+    """
+    Resets global configuration variables to their defaults.
+    """
+    global USE_DEBUG_PROMPT
+    global ALLOW_API_CALLS 
+    global INITAL_MODEL_NAME
+    global FIX_MODEL_NAME
+    global MAX_ITERATIONS
+    global GENERATED_ROOT_FOLDER
+    global EXECUTABLE
+    global PRINT_SEND
+    global MAX_PROMPT_LENGTH
+
+    USE_DEBUG_PROMPT = False
+    ALLOW_API_CALLS = False
+    INITAL_MODEL_NAME = "o1-mini"
+    FIX_MODEL_NAME = "o1-mini"
+    MAX_ITERATIONS = 10
+    GENERATED_ROOT_FOLDER = "generated"
+    EXECUTABLE = "program"
+    PRINT_SEND = True
+    MAX_PROMPT_LENGTH = 50000
+
 if __name__ == "__main__":
     # Example usage (without GUI) would be manually calling run_generation_process(...)
     pass

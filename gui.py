@@ -16,7 +16,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QAction,
-    QFileDialog
+    QFileDialog,
+    QLineEdit,
+    QGroupBox,
+    QFormLayout
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 
@@ -37,7 +40,6 @@ class WorkerSignals(QObject):
     finished = pyqtSignal()         # Signal completion
     data_updated = pyqtSignal(str)  # Let the UI know new files got written
 
-
 # ------------------ Generation Worker ------------------ #
 
 class GenerationWorker(QThread):
@@ -56,7 +58,6 @@ class GenerationWorker(QThread):
         """
         Calls into api.run_generation_process, forwarding logs & events via signals.
         """
-        # Define signal-forwarding callbacks
         def log_func(msg):
             self.signals.log.emit(msg)
 
@@ -68,8 +69,6 @@ class GenerationWorker(QThread):
 
         log_func("[GUI Worker] Starting generation process...\n")
 
-        # We no longer create the session folder or everything file here.
-        # That logic is now in api.run_generation_process.
         api.run_generation_process(
             code_input=self.code_input,
             prompt_input=self.prompt_input,
@@ -98,74 +97,96 @@ class MainWindow(QMainWindow):
         load_action.triggered.connect(self.on_load_from_disk)
         file_menu.addAction(load_action)
 
+        # Add Reset action to File menu
+        reset_action = QAction("Reset", self)
+        reset_action.triggered.connect(self.on_reset)
+        file_menu.addAction(reset_action)
+
         # Central widget
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # Prompt area
-        self.prompt_label = QLabel("Prompt:")
+        # ---------- TOP: Prompt (left) and Model Settings (right) side by side ---------- #
+        top_layout = QHBoxLayout()
+
+        # Prompt group
+        prompt_group = QGroupBox("Prompt")
+        prompt_group_layout = QVBoxLayout()
+
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlaceholderText("Enter your prompt here...")
 
-        # Buttons
+        btn_layout = QHBoxLayout()
         self.run_button = QPushButton("Run Generation")
         self.stop_button = QPushButton("Stop Generation")
         self.stop_button.setEnabled(False)
-
-        btn_layout = QHBoxLayout()
         btn_layout.addWidget(self.run_button)
         btn_layout.addWidget(self.stop_button)
 
-        top_layout = QVBoxLayout()
-        top_layout.addWidget(self.prompt_label)
-        top_layout.addWidget(self.prompt_edit)
-        top_layout.addLayout(btn_layout)
+        prompt_group_layout.addWidget(self.prompt_edit)
+        prompt_group_layout.addLayout(btn_layout)
+        prompt_group.setLayout(prompt_group_layout)
 
-        top_widget = QWidget()
-        top_widget.setLayout(top_layout)
+        # Model Settings group
+        model_group = QGroupBox("Model Settings")
+        model_layout = QFormLayout()
 
-        main_layout.addWidget(top_widget)
+        self.initial_model_edit = QLineEdit()
+        self.initial_model_edit.setText(api.INITAL_MODEL_NAME)
+        model_layout.addRow("Initial Model Name:", self.initial_model_edit)
 
-        # History vs. Output/Code
-        splitter_main = QSplitter(Qt.Horizontal)
+        self.fix_model_edit = QLineEdit()
+        self.fix_model_edit.setText(api.FIX_MODEL_NAME)
+        model_layout.addRow("Fix Model Name:", self.fix_model_edit)
 
-        # Left (History)
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        self.history_label = QLabel("History:")
+        self.max_iterations_edit = QLineEdit()
+        self.max_iterations_edit.setText(str(api.MAX_ITERATIONS))
+        model_layout.addRow("Max Iterations:", self.max_iterations_edit)
+
+        model_group.setLayout(model_layout)
+
+        # Add prompt on the left, model on the right
+        top_layout.addWidget(prompt_group, stretch=3)
+        top_layout.addWidget(model_group, stretch=2)
+
+        main_layout.addLayout(top_layout)
+
+        # ---------- Main splitter: History | Output | Code side by side ---------- #
+        triple_splitter = QSplitter(Qt.Horizontal)
+
+        # History
+        history_group = QGroupBox("History")
+        history_layout = QVBoxLayout()
         self.history_list = QListWidget()
-        left_layout.addWidget(self.history_label)
-        left_layout.addWidget(self.history_list)
-        splitter_main.addWidget(left_widget)
-
-        # Right -> Another splitter
-        splitter_right = QSplitter(Qt.Vertical)
+        history_layout.addWidget(self.history_list)
+        history_group.setLayout(history_layout)
+        triple_splitter.addWidget(history_group)
 
         # Output
-        output_widget = QWidget()
-        output_layout = QVBoxLayout(output_widget)
-        self.output_label = QLabel("Output:")
+        output_group = QGroupBox("Output")
+        output_layout = QVBoxLayout()
         self.output_text = QPlainTextEdit()
         self.output_text.setReadOnly(True)
-        output_layout.addWidget(self.output_label)
         output_layout.addWidget(self.output_text)
-        output_widget.setLayout(output_layout)
-        splitter_right.addWidget(output_widget)
+        output_group.setLayout(output_layout)
+        triple_splitter.addWidget(output_group)
 
         # Code
-        code_widget = QWidget()
-        code_layout = QVBoxLayout(code_widget)
-        self.code_label = QLabel("C++ Code:")
+        code_group = QGroupBox("C++ Code")
+        code_layout = QVBoxLayout()
         self.code_edit = QPlainTextEdit()
-        code_layout.addWidget(self.code_label)
         code_layout.addWidget(self.code_edit)
-        code_widget.setLayout(code_layout)
-        splitter_right.addWidget(code_widget)
-        splitter_main.addWidget(splitter_right)
-        splitter_main.setStretchFactor(1, 3)
+        code_group.setLayout(code_layout)
+        triple_splitter.addWidget(code_group)
 
-        main_layout.addWidget(splitter_main, 1)
+        # Set initial stretch factors so History is smaller
+        # and Output/Code share the remaining space.
+        triple_splitter.setStretchFactor(0, 1)  # History
+        triple_splitter.setStretchFactor(1, 2)  # Output
+        triple_splitter.setStretchFactor(2, 2)  # Code
+
+        main_layout.addWidget(triple_splitter, 1)
 
         # Worker thread placeholder
         self.worker_thread = None
@@ -183,18 +204,11 @@ class MainWindow(QMainWindow):
     # -----------------------------------------------
 
     def on_load_from_disk(self):
-        """
-        Let the user pick a previously generated folder.
-        We read iteration files and prompt from that folder.
-        """
         folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
         if folder:
             self.load_data_into_ui(folder)
 
     def load_data_into_ui(self, folder: str):
-        """
-        Grabs iteration history and prompt from disk, updates UI.
-        """
         loaded_history = api.load_iteration_history_from_folder(folder)
         loaded_prompt = api.load_prompt_from_folder(folder)
 
@@ -223,20 +237,23 @@ class MainWindow(QMainWindow):
                 self.append_log(f"[GUI] No iteration files or prompt found in '{folder}'\n")
 
     def start_generation(self):
-        """
-        Spawn a background thread to run the generation logic.
-        """
         if self.worker_thread and self.worker_thread.isRunning():
-            # Already running, ignore
             return
 
         code_input = self.code_edit.toPlainText()
         prompt_input = self.prompt_edit.toPlainText()
 
-        # Clear old results
         self.history_list.clear()
         self._iteration_history.clear()
         self.output_text.clear()
+
+        # Update global API config based on UI
+        api.INITAL_MODEL_NAME = self.initial_model_edit.text().strip()
+        api.FIX_MODEL_NAME = self.fix_model_edit.text().strip()
+        try:
+            api.MAX_ITERATIONS = int(self.max_iterations_edit.text().strip())
+        except ValueError:
+            api.MAX_ITERATIONS = 10
 
         # Create the worker
         self.worker_thread = GenerationWorker(code_input, prompt_input)
@@ -251,9 +268,6 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(True)
 
     def stop_generation(self):
-        """
-        Tells the logic side to halt the generation loop.
-        """
         api.stop_generation()
         self.append_log("[GUI] Stop signal sent to logic.\n")
 
@@ -263,24 +277,15 @@ class MainWindow(QMainWindow):
         self.append_log("[GUI] Generation thread finished.\n")
 
     def on_data_updated_from_worker(self, session_folder):
-        """
-        Whenever new files are written, reload from disk to keep UI in sync.
-        """
         self.load_data_into_ui(session_folder)
 
     def append_log(self, message):
-        """
-        Appends a message to the output text box.
-        """
         self.output_text.moveCursor(self.output_text.textCursor().End)
         self.output_text.insertPlainText(message)
         self.output_text.moveCursor(self.output_text.textCursor().End)
         QApplication.processEvents()
 
     def on_history_select(self, index):
-        """
-        When an iteration is clicked, show its code + output logs.
-        """
         if index < 0 or index >= len(self._iteration_history):
             return
 
@@ -289,16 +294,21 @@ class MainWindow(QMainWindow):
         self.output_text.clear()
         self.output_text.insertPlainText(data['output'])
 
+    def on_reset(self):
+        api.reset_state()
+        self.max_iterations_edit.setText(str(api.MAX_ITERATIONS))
+        self.initial_model_edit.setText(api.INITAL_MODEL_NAME)
+        self.fix_model_edit.setText(api.FIX_MODEL_NAME)
+        self.prompt_edit.clear()
+        self.code_edit.clear()
+        self.output_text.clear()
+        self.history_list.clear()
 
 def gui_main_qt():
-    """
-    Launches the PyQt application.
-    """
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     gui_main_qt()
