@@ -6,7 +6,7 @@ import datetime
 import re
 
 from dotenv import load_dotenv
-from openai import OpenAIError
+from openai import OpenAI
 import helpers
 
 # PyQt Imports
