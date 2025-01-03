@@ -2,12 +2,11 @@
 
 import os
 import sys
-import subprocess
 import datetime
 import re
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAIError
 import helpers
 
 # PyQt Imports
@@ -30,12 +29,15 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 import syntax_highlighter
 from gui_style import apply_dark_mode
 
+# Import the helper class from cpp_compiler.py
+from cpp_compiler import CppCompiler
+
 # ------------------ Original Configuration ------------------ #
 
 USE_DEBUG_PROMPT = False
 INITAL_MODEL_NAME = "o1-preview"
 FIX_MODEL_NAME = "o1-mini"
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 4
 
 GENERATED_ROOT_FOLDER = "generated"
 EXECUTABLE = "program"  # We'll compile the code to a program each iteration
@@ -117,40 +119,8 @@ def read_file(filename):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# ------------------ Compilation & Execution Helpers ------------------ #
-
-def compile_cpp(source_file, output_file):
-    """
-    Compiles the C++ file into an executable using clang++. Returns (success, error_message).
-    """
-    compiler = "clang++"
-    print(f"[compile_cpp] Using compiler: {compiler}")
-    
-    cmd = [compiler, "-std=c++17", "-mavx2", source_file, "-o", output_file]
-    print(f"[compile_cpp] Command: {' '.join(cmd)}\n")
-    
-    try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _, stderr = process.communicate()
-        return (process.returncode == 0, stderr.decode("utf-8"))
-    except FileNotFoundError:
-        return (False, f"Compiler '{compiler}' not found. Ensure it is installed and on your PATH.")
-
-def run_executable(executable):
-    """
-    Runs the executable file and returns (success, combined_output).
-    """
-    print(f"[run_executable] Running ./{executable}...\n")
-    cmd = [f"./{executable}"]
-    try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate(timeout=30)
-        return (process.returncode == 0, out.decode("utf-8") + "\n" + err.decode("utf-8"))
-    except subprocess.TimeoutExpired:
-        process.kill()
-        return (False, "Timeout expired while running the code. Possibly an infinite loop.\n")
-    except FileNotFoundError:
-        return (False, f"Executable '{executable}' not found. Ensure it was created successfully.\n")
+# ------------------ Instantiate the global compiler ------------------ #
+cpp_compiler = CppCompiler()
 
 # ------------------ Fix / Compile / Run Helpers ------------------ #
 
@@ -181,7 +151,7 @@ def fix_code_until_success_or_limit(
         append_to_file(everything_file, f"===== {label_prefix} Fix Iteration {fix_iteration} =====\n{current_code}")
 
         print(f"[main] Compiling {label_prefix} code iteration {fix_iteration}...\n")
-        success, error_message = compile_cpp(fix_file, os.path.join(session_folder, EXECUTABLE))
+        success, error_message = cpp_compiler.compile_cpp(fix_file, os.path.join(session_folder, EXECUTABLE))
 
         compile_output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_compile.txt")
         write_to_file(compile_output_file, error_message)
@@ -200,7 +170,7 @@ def fix_code_until_success_or_limit(
             continue
 
         print(f"[main] Running {label_prefix} code iteration {fix_iteration}...\n")
-        test_success, test_output = run_executable(os.path.join(session_folder, EXECUTABLE))
+        test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
         output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_output.txt")
         write_to_file(output_file, test_output)
@@ -236,7 +206,7 @@ def compile_run_check_code(
     append_to_file(everything_file, f"===== {label_prefix} Code =====\n{code}")
 
     print(f"[main] Compiling {label_prefix}...\n")
-    success, error_message = compile_cpp(code_filename, os.path.join(session_folder, EXECUTABLE))
+    success, error_message = cpp_compiler.compile_cpp(code_filename, os.path.join(session_folder, EXECUTABLE))
 
     compile_output_file = os.path.join(session_folder, f"{label_prefix}_compile.txt")
     write_to_file(compile_output_file, error_message)
@@ -247,7 +217,7 @@ def compile_run_check_code(
         return (False, error_message, "")
 
     print(f"[main] Running {label_prefix}...\n")
-    test_success, test_output = run_executable(os.path.join(session_folder, EXECUTABLE))
+    test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
     output_file = os.path.join(session_folder, f"{label_prefix}_output.txt")
     write_to_file(output_file, test_output)
@@ -610,7 +580,6 @@ class GenerationWorker(QThread):
 
         self.signals.log.emit("[GUI] Process finished. Check 'History' for details.\n")
         self.signals.finished.emit()
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
