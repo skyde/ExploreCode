@@ -3,7 +3,7 @@
 # ------------------ Configuration ------------------ #
 
 USE_DEBUG_PROMPT = False
-ALLOW_API_CALLS = False
+ALLOW_API_CALLS = True
 INITAL_MODEL_NAME = "o1-mini"
 FIX_MODEL_NAME = "o1-mini"
 MAX_ITERATIONS = 10
