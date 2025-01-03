@@ -57,12 +57,11 @@ from cpp_compiler import CppCompiler
 # ------------------ Setup ------------------ #
 
 ai_service = AIService(not ALLOW_API_CALLS)
-
 cpp_compiler = CppCompiler()
 
-# ------------------ Fix / Compile / Run Helpers ------------------ #
-
 generation_stopped = False
+
+# ------------------ Fix / Compile / Run Helpers ------------------ #
 
 def fix_code_until_success_or_limit(
     initial_code: str,
@@ -74,8 +73,8 @@ def fix_code_until_success_or_limit(
     max_iterations: int = MAX_ITERATIONS
 ):
     """
-    Attempt to compile and run initial_code. If it fails either compilation or runtime tests,
-    request a fix from OpenAI. Repeat until success or the maximum number of iterations is reached.
+    Attempt to compile and run 'initial_code'. If compilation/runtime fails,
+    request a fix from OpenAI. Repeat until success or max iteration limit.
     """
     global generation_stopped
     current_code = initial_code
@@ -91,9 +90,16 @@ def fix_code_until_success_or_limit(
         print(f"[main] Compiling {label_prefix} code iteration {fix_iteration}...\n")
         success, error_message = cpp_compiler.compile_cpp(fix_file, os.path.join(session_folder, EXECUTABLE))
 
-        compile_output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_compile.txt")
-        write_to_file(compile_output_file, error_message)
-        append_to_file(everything_file, f"===== {label_prefix} Fix Iteration {fix_iteration} Compile Output =====\n{error_message}")
+        # Write/append compile output to the same file used for runtime output
+        combined_output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_output.txt")
+        write_to_file(
+            combined_output_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Compilation Output =====\n{error_message}\n\n"
+        )
+        append_to_file(
+            everything_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Compile Output =====\n{error_message}"
+        )
 
         if not success:
             print("[main] Compilation failed. Requesting new fix...\n")
@@ -110,9 +116,15 @@ def fix_code_until_success_or_limit(
         print(f"[main] Running {label_prefix} code iteration {fix_iteration}...\n")
         test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
-        output_file = os.path.join(session_folder, f"{label_prefix}_fix_v{fix_iteration}_output.txt")
-        write_to_file(output_file, test_output)
-        append_to_file(everything_file, f"===== {label_prefix} Fix Iteration {fix_iteration} Run Output =====\n{test_output}")
+        # Append runtime output into the same file
+        append_to_file(
+            combined_output_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Run Output =====\n{test_output}\n\n"
+        )
+        append_to_file(
+            everything_file,
+            f"===== {label_prefix} Fix Iteration {fix_iteration} Run Output =====\n{test_output}"
+        )
 
         if test_success:
             print(f"[main] {label_prefix} code now passes tests!\n")
@@ -139,6 +151,7 @@ def compile_run_check_code(
 ):
     """
     Compiles and runs the provided code, returning (success, error_message, runtime_output).
+    Both compile and runtime outputs are appended to the same output file.
     """
     write_to_file(code_filename, code)
     append_to_file(everything_file, f"===== {label_prefix} Code =====\n{code}")
@@ -146,20 +159,34 @@ def compile_run_check_code(
     print(f"[main] Compiling {label_prefix}...\n")
     success, error_message = cpp_compiler.compile_cpp(code_filename, os.path.join(session_folder, EXECUTABLE))
 
-    compile_output_file = os.path.join(session_folder, f"{label_prefix}_compile.txt")
-    write_to_file(compile_output_file, error_message)
-    append_to_file(everything_file, f"===== {label_prefix} Compile Output =====\n{error_message}")
+    # Write all compile logs to a single output file
+    combined_output_file = os.path.join(session_folder, f"{label_prefix}_output.txt")
+    write_to_file(
+        combined_output_file,
+        f"===== {label_prefix} Compile Output =====\n{error_message}\n\n"
+    )
+    append_to_file(
+        everything_file,
+        f"===== {label_prefix} Compile Output =====\n{error_message}\n\n"
+    )
 
     if not success:
         print(f"[main] Error compiling {label_prefix}:\n{error_message}\n")
+        # Return the compile output separately as error_message, but we've also written it to the output file
         return (False, error_message, "")
 
     print(f"[main] Running {label_prefix}...\n")
     test_success, test_output = cpp_compiler.run_executable(os.path.join(session_folder, EXECUTABLE))
 
-    output_file = os.path.join(session_folder, f"{label_prefix}_output.txt")
-    write_to_file(output_file, test_output)
-    append_to_file(everything_file, f"===== {label_prefix} Run Output =====\n{test_output}")
+    # Append runtime output to the same file
+    append_to_file(
+        combined_output_file,
+        f"===== {label_prefix} Run Output =====\n{test_output}\n\n"
+    )
+    append_to_file(
+        everything_file,
+        f"===== {label_prefix} Run Output =====\n{test_output}\n\n"
+    )
 
     if not test_success:
         print("[main] Code run failed (non-zero exit).")
@@ -168,41 +195,94 @@ def compile_run_check_code(
         print("[main] Code run succeeded (exit code = 0). Tests passed!\n")
         return (True, "", test_output)
 
-# ------------------ Helper to load last generation from disk ------------------ #
+# ------------------ Load-from-disk Helpers ------------------ #
 
-def load_last_generated_code(session_folder: str) -> str:
+def load_iteration_history_from_folder(session_folder: str):
     """
-    Scans the session folder for the highest versioned code file:
-    either 'generated_vN.cpp', 'initial_code_fix_vN.cpp', or similar.
-    Returns the content of the file with the highest N found.
-    If no code is found, returns an empty string.
+    Loads all iteration versions from the given folder. Returns a list of dicts
+    that the GUI can show in the 'History' list. Each dict has the same structure
+    used in the generation/fixing process:
+      {
+        'label': str,
+        'code': str,
+        'output': str,
+        'compile_err': str
+      }
+    The list is sorted by version number found in the filename.
     """
     if not os.path.isdir(session_folder):
-        print(f"[load_last_generated_code] Folder '{session_folder}' does not exist.")
-        return ""
+        return []
 
-    highest_version = -1
-    best_file = None
-
-    # Regex for capturing something like _v(\d+).cpp
-    version_pattern = re.compile(r"_v(\d+)\.cpp$")
+    version_pattern = re.compile(r"(.*)_v(\d+)(\.cpp)$")
+    iterations_map = {}
 
     for filename in os.listdir(session_folder):
-        if not filename.endswith(".cpp"):
-            continue
-        match = version_pattern.search(filename)
-        if match:
-            version_num = int(match.group(1))
-            if version_num > highest_version:
-                highest_version = version_num
-                best_file = filename
+        full_path = os.path.join(session_folder, filename)
+        if os.path.isfile(full_path):
+            # Check for .cpp code with "_vN.cpp"
+            cpp_match = version_pattern.match(filename)
+            if cpp_match:
+                prefix = cpp_match.group(1)
+                version_str = cpp_match.group(2)
+                version = int(version_str)
+                if version not in iterations_map:
+                    iterations_map[version] = {
+                        'prefix': prefix, 
+                        'code': "",
+                        'compile_err': "",
+                        'output': ""
+                    }
+                iterations_map[version]['code'] = read_file(full_path)
+            # Since compile and runtime are now in a single "_output.txt" file,
+            # we only look for "_output.txt" to fill 'output' in the GUI.
+            elif filename.endswith("_output.txt"):
+                opattern = re.compile(r"(.*)_v(\d+)_output\.txt$")
+                omatch = opattern.match(filename)
+                if omatch:
+                    prefix = omatch.group(1)
+                    version_str = omatch.group(2)
+                    version = int(version_str)
+                    if version not in iterations_map:
+                        iterations_map[version] = {
+                            'prefix': prefix, 
+                            'code': "",
+                            'compile_err': "",
+                            'output': ""
+                        }
+                    # "output" in the iteration data will contain both compile + runtime logs now
+                    file_contents = read_file(full_path)
+                    iterations_map[version]['output'] = file_contents
+                    # For consistency with the old structure, set 'compile_err' if it detects any snippet
+                    # you consider compile error. (We keep it as a separate field so the GUI can still
+                    # show it distinctly if desired.)
+                    # If you want them fully combined, you can omit these lines:
+                    if "Error" in file_contents or "error:" in file_contents.lower():
+                        iterations_map[version]['compile_err'] = file_contents
 
-    if best_file:
-        full_path = os.path.join(session_folder, best_file)
-        print(f"[load_last_generated_code] Loading code from: {full_path}")
-        return read_file(full_path)
+    iteration_list = []
+    for version in sorted(iterations_map.keys()):
+        prefix = iterations_map[version]['prefix']
+        code = iterations_map[version]['code']
+        compile_err = iterations_map[version]['compile_err']
+        output = iterations_map[version]['output']
+        label = f"{prefix}_v{version}"
 
-    print("[load_last_generated_code] No previous generation code found.")
+        iteration_list.append({
+            'label': label,
+            'code': code,
+            'compile_err': compile_err,
+            'output': output
+        })
+    return iteration_list
+
+def load_prompt_from_folder(session_folder: str) -> str:
+    """
+    If 'prompt.txt' exists in the session folder, return its contents;
+    otherwise return an empty string.
+    """
+    prompt_file = os.path.join(session_folder, "prompt.txt")
+    if os.path.isfile(prompt_file):
+        return read_file(prompt_file)
     return ""
 
 # ------------------ GUI Implementation ------------------ #
@@ -246,6 +326,7 @@ class GenerationWorker(QThread):
         initial_code_success = False
         single_file_code = ""
 
+        # Try the user-supplied code first
         if self.code_input.strip() and not generation_stopped:
             iteration_label = "Initial Code"
             init_code_filename = os.path.join(self.session_folder, "initial_code.cpp")
@@ -270,6 +351,7 @@ class GenerationWorker(QThread):
             if success:
                 initial_code_success = True
             else:
+                # If it failed, attempt a fix
                 if compile_err:
                     self.signals.log.emit("[GUI] Fixing compile error...\n")
                     truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
@@ -298,6 +380,7 @@ class GenerationWorker(QThread):
                             initial_code_success = True
                             single_file_code = fixed_code
                 else:
+                    # There's a runtime failure
                     self.signals.log.emit("[GUI] Fixing runtime error...\n")
                     truncated_test_output = truncate_preserving_start_and_end(runtime_out, max_length=7000)
                     fix_input = (
@@ -325,15 +408,18 @@ class GenerationWorker(QThread):
                             initial_code_success = True
                             single_file_code = fixed_code
 
+        # If initial code isn't successful, or there's no code, generate from scratch using the prompt
         if not initial_code_success and not generation_stopped:
             if not self.prompt_input.strip():
                 self.signals.log.emit("[GUI] No code or prompt provided. Stopping.\n")
                 self.signals.finished.emit()
                 return
 
+            # Write the prompt to the session folder
             write_to_file(PROMPT_FILE, self.prompt_input)
             append_to_file(EVERYTHING_FILE, f"===== Prompt =====\n{self.prompt_input}\n\n")
 
+            # Ask AI to create new code
             combined_prompt_user = f"""
 {helpers.GENERATE_PROMPT_USER}
 \"\"\"{self.prompt_input}\"\"\" 
@@ -341,6 +427,7 @@ class GenerationWorker(QThread):
             ensure_prompt_length_ok(combined_prompt_user)
             single_file_code = ai_service.call_ai(helpers.GENERATE_PROMPT_SYSTEM, combined_prompt_user, INITAL_MODEL_NAME)
 
+            # Attempt compilation/fix for up to MAX_ITERATIONS
             for iteration in range(1, MAX_ITERATIONS + 1):
                 if generation_stopped:
                     break
@@ -368,6 +455,7 @@ class GenerationWorker(QThread):
                 if success:
                     break
                 else:
+                    # Attempt a fix
                     if compile_err:
                         self.signals.log.emit("[GUI] Attempting compile fix...\n")
                         truncated_compile_log = truncate_preserving_start_and_end(compile_err, max_length=7000)
@@ -499,12 +587,35 @@ class MainWindow(QMainWindow):
     def on_load_from_disk(self):
         folder = QFileDialog.getExistingDirectory(self, "Select session folder to load code")
         if folder:
-            code = load_last_generated_code(folder)
-            if code:
-                self.code_edit.setPlainText(code)
-                self.append_log(f"[GUI] Loaded code from '{folder}'\n")
+            # Load iteration data (including compile errors & runtime output)
+            loaded_history = load_iteration_history_from_folder(folder)
+            # Also load prompt
+            loaded_prompt = load_prompt_from_folder(folder)
+
+            # Clear UI
+            self.history_list.clear()
+            self._iteration_history.clear()
+            self.output_text.clear()
+
+            if loaded_prompt:
+                self.prompt_edit.setPlainText(loaded_prompt)
+
+            if loaded_history:
+                self._iteration_history = loaded_history
+                for item in self._iteration_history:
+                    self.history_list.addItem(item['label'])
+
+                # Automatically select & display the last iteration
+                last_index = len(self._iteration_history) - 1
+                self.history_list.setCurrentRow(last_index)
+                self.on_history_select(last_index)
+
+                self.append_log(f"[GUI] Loaded {len(loaded_history)} iteration(s) + prompt from '{folder}'\n")
             else:
-                self.append_log(f"[GUI] No code found in '{folder}'\n")
+                if loaded_prompt:
+                    self.append_log(f"[GUI] No iteration files found, but loaded prompt from '{folder}'\n")
+                else:
+                    self.append_log(f"[GUI] No iteration files or prompt found in '{folder}'\n")
 
     def start_generation(self):
         if self.worker_thread and self.worker_thread.isRunning():
@@ -550,13 +661,20 @@ class MainWindow(QMainWindow):
         self.output_text.moveCursor(self.output_text.textCursor().End)
 
     def on_history_select(self, index):
+        """
+        When the user clicks on an iteration in the History list,
+        show that iteration's code and compile/runtime outputs.
+        """
         if index < 0 or index >= len(self._iteration_history):
             return
+
         data = self._iteration_history[index]
         self.code_edit.setPlainText(data['code'])
         self.output_text.clear()
+
         if data['compile_err']:
             self.output_text.insertPlainText("[Compile Error]\n" + data['compile_err'] + "\n\n")
+
         self.output_text.insertPlainText(data['output'])
 
 def gui_main_qt():
