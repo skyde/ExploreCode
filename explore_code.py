@@ -5,8 +5,7 @@ import sys
 import datetime
 import re
 
-from dotenv import load_dotenv
-from openai import OpenAI
+from ai_service import AIService
 import helpers
 
 # PyQt Imports
@@ -47,8 +46,7 @@ MAX_PROMPT_LENGTH = 50000
 
 # ------------------ Setup OpenAI ------------------ #
 
-load_dotenv()  # so OPENAI_API_KEY is available
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+ai_service = AIService()
 
 # ------------------ Utility: Prompt Length Checker ------------------ #
 
@@ -70,32 +68,9 @@ def maybe_truncate_for_llm(content, max_length=10000):
 
 def call_openai(system_prompt, user_prompt, model, temperature=0.2):
     """
-    Calls the OpenAI client with a system prompt and user prompt, returning the response text.
+    Wrapper for backwards compatibility
     """
-    if PRINT_SEND:
-        print("[call_openai] Sending prompt to OpenAI:")
-        print("------------------ System --------------")
-        print(system_prompt)
-        print("------------------ User ----------------\n")
-        print(user_prompt)
-        print("----------------------------------------\n")
-
-    # For non-supported models, just use the user role
-    system_role = "user"
-
-    response = client.chat.completions.create(
-        messages=[{"role": system_role, "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        model=model
-    )
-
-    answer = response.choices[0].message.content
-
-    print("[call_openai] Received response from OpenAI:")
-    print("--------------------------------------------")
-    print(answer)
-    print("--------------------------------------------\n")
-
-    return answer
+    return ai_service.call_ai(system_prompt, user_prompt, model, temperature)
 
 # ------------------ File Helpers ------------------ #
 
