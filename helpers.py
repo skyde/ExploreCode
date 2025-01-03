@@ -1,3 +1,5 @@
+import re
+
 DEBUG_PROMPT = """
 - Generate an algorithm that calculates connectivity clustering given a graph of nodes and edges
 - Each node is connected to 1-8 other nodes
@@ -32,3 +34,17 @@ Reply with ONLY code. Your response will be directly fed into the Clang compiler
 - Do NOT put code in
 cpp blocks.
 """
+
+def sanitize_for_filename(text, max_length=30):
+    """
+    Converts text into a safe snippet for folder names by:
+      - Replacing all non-alphanumeric or underscore/dash with underscores
+      - Truncating to a certain max_length
+    """
+    # Replace disallowed chars with underscores
+    safe_text = re.sub(r'[^a-zA-Z0-9_\-]+', '_', text)
+    safe_text = safe_text.strip("_")
+    # Truncate
+    if len(safe_text) > max_length:
+        safe_text = safe_text[:max_length]
+    return safe_text

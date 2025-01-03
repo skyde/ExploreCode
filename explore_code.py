@@ -262,7 +262,14 @@ class GenerationWorker(QThread):
 
         self.signals.log.emit("[GUI] Starting generation process...\n")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
+
+        # Build session folder name with a snippet from the prompt so we can see it.
+        if self.prompt_input.strip():
+            snippet = helpers.sanitize_for_filename(self.prompt_input)
+            self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}_{snippet}")
+        else:
+            self.session_folder = os.path.join(GENERATED_ROOT_FOLDER, f"session_{timestamp}")
+        
         os.makedirs(self.session_folder, exist_ok=True)
 
         EVERYTHING_FILE = os.path.join(self.session_folder, "everything.cpp")
