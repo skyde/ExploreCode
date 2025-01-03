@@ -370,7 +370,7 @@ class GenerationWorker(QThread):
                 if generation_stopped:
                     break
 
-                iteration_label = f"Generated Iteration {iteration}"
+                iteration_label = f"Iteration {iteration}"
                 gen_code_filename = os.path.join(self.session_folder, f"generated_v{iteration}.cpp")
 
                 success, compile_err, runtime_out = compile_run_check_code(
