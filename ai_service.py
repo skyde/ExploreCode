@@ -77,8 +77,7 @@ class AIService:
                 {"role": system_role, "content": system_prompt}, 
                 {"role": "user", "content": user_prompt}
             ],
-            model=model,
-            temperature=temperature
+            model=model
         )
 
         answer = response.choices[0].message.content
