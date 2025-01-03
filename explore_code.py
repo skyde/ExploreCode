@@ -54,27 +54,10 @@ from gui_style import apply_dark_mode
 # Import the helper class from cpp_compiler.py
 from cpp_compiler import CppCompiler
 
-# ------------------ Setup AI Service ------------------ #
+# ------------------ Setup ------------------ #
 
 ai_service = AIService(not ALLOW_API_CALLS)
 
-# ------------------ Utility: Prompt Length Checker ------------------ #
-
-def ensure_prompt_length_ok(prompt, max_length=MAX_PROMPT_LENGTH):
-    """Raise an error if the prompt is too large."""
-    if len(prompt) > max_length:
-        raise ValueError(f"Prompt length {len(prompt)} exceeded maximum of {max_length} characters. Exiting...")
-
-def maybe_truncate_for_llm(content, max_length=10000):
-    """If content is longer than max_length, truncate the middle and add a note."""
-    if len(content) <= max_length:
-        return content
-    half = max_length // 2
-    start_part = content[:half]
-    end_part = content[-half:]
-    return start_part + "\n... [TRUNCATED MIDDLE FOR LLM] ...\n" + end_part
-
-# ------------------ Instantiate the global compiler ------------------ #
 cpp_compiler = CppCompiler()
 
 # ------------------ Fix / Compile / Run Helpers ------------------ #
